@@ -1,0 +1,18 @@
+# Visual Studio & Build artifacts
+.vs/
+.codex-build/
+.codex-obj/
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+
+# Python & Temporary outputs
+__pycache__/
+*.pyc
+outputs/
+
+# OS generated
+[D|d]esktop.ini
+Thumbs.db

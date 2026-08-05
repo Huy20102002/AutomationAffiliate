@@ -1,0 +1,356 @@
+﻿{
+    "Steps":  [
+                  {
+                      "Type":  "Start",
+                      "Description":  "",
+                      "CanvasX":  40,
+                      "CanvasY":  40
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  2000,
+                      "Description":  "",
+                      "CanvasX":  40,
+                      "CanvasY":  150
+                  },
+                  {
+                      "Type":  "PushVideo",
+                      "VideoSource":  "ExcelPath",
+                      "ClearDeviceVideosBeforeUpload":  true,
+                      "Description":  "",
+                      "CanvasX":  40,
+                      "CanvasY":  260
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  4000,
+                      "Description":  "",
+                      "CanvasX":  40,
+                      "CanvasY":  370
+                  },
+                  {
+                      "Type":  "OpenApp",
+                      "TextValue":  "com.shopee.vn",
+                      "Description":  "",
+                      "CanvasX":  40,
+                      "CanvasY":  480
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  4000,
+                      "Description":  "",
+                      "CanvasX":  40,
+                      "CanvasY":  590
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "XPath",
+                      "X":  0,
+                      "Y":  0,
+                      "Description":  "Tab Live \u0026 Video",
+                      "CanvasX":  300,
+                      "CanvasY":  40,
+                      "TapXPath":  "//node[@content-desc=\u0027tab_bar_button_video_and_live\u0027]"
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  5000,
+                      "Description":  "",
+                      "CanvasX":  300,
+                      "CanvasY":  150
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "XPath",
+                      "X":  0,
+                      "Y":  0,
+                      "Description":  "Icon trang cá nhân",
+                      "CanvasX":  300,
+                      "CanvasY":  260,
+                      "TapXPath":  "//node[@content-desc=\u0027click me page icon\u0027]"
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  2000,
+                      "Description":  "",
+                      "CanvasX":  300,
+                      "CanvasY":  370
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "XPath",
+                      "X":  0,
+                      "Y":  0,
+                      "Description":  "Nút đăng video",
+                      "CanvasX":  300,
+                      "CanvasY":  480,
+                      "TapXPath":  "//node[@content-desc=\u0027click to post video\u0027]"
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  3000,
+                      "Description":  "",
+                      "CanvasX":  300,
+                      "CanvasY":  590
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "XPath",
+                      "X":  0,
+                      "Y":  0,
+                      "Description":  "Nút Thư viện",
+                      "CanvasX":  560,
+                      "CanvasY":  40,
+                      "TapXPath":  "//node[@text=\u0027Thư viện\u0027]"
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  2000,
+                      "Description":  "",
+                      "CanvasX":  560,
+                      "CanvasY":  150
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "XPath",
+                      "X":  0,
+                      "Y":  0,
+                      "Description":  "Tab Video trong thư viện",
+                      "CanvasX":  560,
+                      "CanvasY":  260,
+                      "TapXPath":  "//node[@text=\u0027Video\u0027]"
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  2000,
+                      "Description":  "",
+                      "CanvasX":  560,
+                      "CanvasY":  370
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "XPath",
+                      "X":  0,
+                      "Y":  0,
+                      "Description":  "Chọn video đầu tiên",
+                      "CanvasX":  560,
+                      "CanvasY":  480,
+                      "TapXPath":  "//node[@resource-id=\u0027com.shopee.vn:id/rv_gallery\u0027]/node[1]"
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  5000,
+                      "Description":  "",
+                      "CanvasX":  560,
+                      "CanvasY":  590
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "XPath",
+                      "X":  0,
+                      "Y":  0,
+                      "Description":  "Tiếp theo chọn video",
+                      "CanvasX":  820,
+                      "CanvasY":  40,
+                      "TapXPath":  "//node[@text=\u0027Tiếp theo\u0027 and @clickable=\u0027true\u0027]"
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  2000,
+                      "Description":  "",
+                      "CanvasX":  820,
+                      "CanvasY":  150
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "XPath",
+                      "X":  0,
+                      "Y":  0,
+                      "Description":  "Tiếp theo màn chỉnh sửa",
+                      "CanvasX":  820,
+                      "CanvasY":  260,
+                      "TapXPath":  "//node[@resource-id=\u0027com.shopee.vn:id/tv_compress\u0027]"
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  2222,
+                      "Description":  "",
+                      "CanvasX":  820,
+                      "CanvasY":  370
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "XPath",
+                      "X":  0,
+                      "Y":  0,
+                      "Description":  "Ô nhập mô tả",
+                      "CanvasX":  820,
+                      "CanvasY":  480,
+                      "TapXPath":  "//node[contains(@resource-id, \u0027:id/et_caption\u0027)]"
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  2000,
+                      "Description":  "",
+                      "CanvasX":  820,
+                      "CanvasY":  590
+                  },
+                  {
+                      "Type":  "InputText",
+                      "TextValue":  "",
+                      "BindingColumn":  "Title",
+                      "Description":  "Láº¥y cá»™t Title",
+                      "CanvasX":  1080,
+                      "CanvasY":  40
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  1000,
+                      "Description":  "",
+                      "CanvasX":  1080,
+                      "CanvasY":  150
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "XPath",
+                      "TapXPath":  "//node[@text=\u0027Đồng ý\u0027]",
+                      "Description":  "",
+                      "CanvasX":  1080,
+                      "CanvasY":  260
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  1000,
+                      "Description":  "",
+                      "CanvasX":  1080,
+                      "CanvasY":  370
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "XPath",
+                      "TapXPath":  "//node[contains(@resource-id, \u0027:id/ll_add_product_symbol\u0027)]",
+                      "Description":  "",
+                      "CanvasX":  1080,
+                      "CanvasY":  480
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  2000,
+                      "Description":  "",
+                      "CanvasX":  1080,
+                      "CanvasY":  590
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "Coordinates",
+                      "X":  1015,
+                      "Y":  155,
+                      "Description":  "Icon nháº­p link sáº£n pháº©m",
+                      "CanvasX":  1340,
+                      "CanvasY":  40
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  1000,
+                      "Description":  "",
+                      "CanvasX":  1340,
+                      "CanvasY":  150
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "XPath",
+                      "TapXPath":  "//node[@class=\u0027android.widget.EditText\u0027]",
+                      "Description":  "",
+                      "CanvasX":  1340,
+                      "CanvasY":  260
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  500,
+                      "Description":  "",
+                      "CanvasX":  1340,
+                      "CanvasY":  370
+                  },
+                  {
+                      "Type":  "InputText",
+                      "TextValue":  "",
+                      "BindingColumn":  "ShopeeAffLink",
+                      "Description":  "Láº¥y cá»™t ShopeeAffLink",
+                      "CanvasX":  1340,
+                      "CanvasY":  480
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  500,
+                      "Description":  "",
+                      "CanvasX":  1340,
+                      "CanvasY":  590
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "XPath",
+                      "TapXPath":  "//node[@class=\u0027android.view.ViewGroup\u0027 and @clickable=\u0027true\u0027 and @bounds=\u0027[336,825][746,919]\u0027]",
+                      "Description":  "NÃºt Nháº­p link",
+                      "CanvasX":  1600,
+                      "CanvasY":  40
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  2000,
+                      "Description":  "",
+                      "CanvasX":  1600,
+                      "CanvasY":  150
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "XPath",
+                      "TapXPath":  "//node[@bounds=\u0027[32,1283][79,1330]\u0027]",
+                      "Description":  "Chá»n sáº£n pháº©m Ä‘áº§u tiÃªn",
+                      "CanvasX":  1600,
+                      "CanvasY":  260
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  1000,
+                      "Description":  "",
+                      "CanvasX":  1600,
+                      "CanvasY":  370
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "Coordinates",
+                      "X":  715,
+                      "Y":  2002,
+                      "Description":  "NÃºt ThÃªm sáº£n pháº©m Ä‘Ã£ chá»n",
+                      "CanvasX":  1600,
+                      "CanvasY":  480
+                  },
+                  {
+                      "Type":  "Delay",
+                      "DelayAfterMs":  1000,
+                      "Description":  "",
+                      "CanvasX":  1600,
+                      "CanvasY":  590
+                  },
+                  {
+                      "Type":  "Tap",
+                      "TapMode":  "XPath",
+                      "TapXPath":  "//node[@resource-id=\u0027com.shopee.vn.dfpluginshopee16:id/btn_post\u0027]",
+                      "Description":  "NÃºt ÄÄƒng",
+                      "CanvasX":  1860,
+                      "CanvasY":  40
+                  },
+                  {
+                      "Type":  "End",
+                      "Description":  "",
+                      "CanvasX":  1860,
+                      "CanvasY":  150
+                  }
+              ],
+    "Variables":  [
+
+                  ],
+    "Products":  [
+
+                 ]
+}

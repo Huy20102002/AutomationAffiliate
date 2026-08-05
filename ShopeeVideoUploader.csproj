@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon />
+    <RootNamespace>ShopeeVideoUploader</RootNamespace>
+    <AssemblyName>ShopeeVideoUploader</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AdvancedSharpAdbClient" Version="3.6.16" />
+    <PackageReference Include="Dapper" Version="2.1.79" />
+    <PackageReference Include="Guna.UI2.WinForms" Version="2.0.4.8" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+    <PackageReference Include="ReaLTaiizor" Version="*" />
+    <PackageReference Include="MiniExcel" Version="*" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.*" />
+  </ItemGroup>
+
+</Project>
