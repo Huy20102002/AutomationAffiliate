@@ -84,7 +84,7 @@ public class AdbManager : IDisposable
     /// <summary>Lấy danh sách package ứng dụng bên thứ ba đang cài trên thiết bị.</summary>
     public async Task<List<string>> GetInstalledPackagesAsync(DeviceData device)
     {
-        var output = await ShellAsync(device, "pm list packages -3");
+        var output = await ShellAsync(device, "pm list packages");
         return output
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
             .Select(line => line.Trim().Replace("package:", string.Empty, StringComparison.OrdinalIgnoreCase))
@@ -396,6 +396,7 @@ public class AdbManager : IDisposable
     public async Task InputTextAsync(DeviceData device, string text)
     {
         EnsureInit();
+        if (string.IsNullOrEmpty(text)) return;
         Logger.Info($"[ADB] InputText: \"{(text.Length > 40 ? text[..40] + "..." : text)}\"");
         
         var keyboardPackage = await ShellAsync(device, "pm path com.android.adbkeyboard");
@@ -445,11 +446,10 @@ public class AdbManager : IDisposable
     public async Task<int> ClearFlowPilotVideosAsync(DeviceData device)
     {
         EnsureInit();
-        const string command = "find /sdcard/DCIM/Camera -maxdepth 1 -type f \\( -name 'flowpilot_*.mp4' -o -name 'flowpilot_*.mov' -o -name 'flowpilot_*.mkv' -o -name 'flowpilot_*.avi' \\) -print -delete";
-        var output = await ShellAsync(device, command);
-        var deleted = output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-        Logger.Info($"[VIDEO] Cleared {deleted.Length} old FlowPilot video(s) from the device.");
-        return deleted.Length;
+        const string command = "rm -f /sdcard/DCIM/Camera/*.mp4 /sdcard/DCIM/Camera/*.mov /sdcard/DCIM/Camera/*.mkv /sdcard/DCIM/Camera/*.avi";
+        await ShellAsync(device, command);
+        Logger.Info("[VIDEO] Cleared all video(s) from the device.");
+        return 1;
     }
 
     public async Task TriggerMediaScanAsync(DeviceData device, string remotePath)

@@ -8,6 +8,12 @@ namespace ShopeeVideoUploader.Controls;
 public sealed class ProductListControl : UserControl
 {
     private readonly Guna.UI2.WinForms.Guna2DataGridView _grid;
+    private readonly Panel _sidebar;
+    private readonly CheckedListBox _folderList;
+    private IReadOnlyList<JobItem> _allProducts = [];
+    private IReadOnlyList<FolderItem> _allFolders = [];
+    public event EventHandler? FolderCrudRequested;
+    private bool _isFiltering = false;
     private bool _suggestionsEnabled = true;
 
     public event EventHandler? ImportRequested;
@@ -44,7 +50,7 @@ public sealed class ProductListControl : UserControl
         };
         var subtitle = new Label
         {
-            Text = "Quản lý video, tiêu đề, link tiếp thị và trạng thái đã up Shopee",
+            Text = "Quản lý video, tiêu đề, link tiếp thị và trạng thái đăng tải",
             AutoSize = true,
             Location = new Point(17, 36),
             Font = new Font("Segoe UI", 8.5F),
@@ -129,7 +135,7 @@ public sealed class ProductListControl : UserControl
         AddColumn("VideoPath", "Đường dẫn video", 34F);
         AddColumn("Title", "Tiêu đề", 22F);
         AddColumn("SuggestedAffLink", "Gợi ý aff", 22F);
-        AddColumn("ShopeeAffLink", "ShopeeAffLink", 26F);
+        AddColumn("ShopeeAffLink", "Link tiếp thị", 26F);
         AddColumn("Status", "Trạng thái", 12F);
         _grid.Columns.Add(new DataGridViewComboBoxColumn
         {
@@ -141,54 +147,185 @@ public sealed class ProductListControl : UserControl
             Items = { "Chưa up Shopee", "Đã up Shopee" },
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
+        _grid.Columns.Add(new DataGridViewComboBoxColumn
+        {
+            Name = "FbStatus",
+            HeaderText = "Trạng thái FB",
+            FillWeight = 18F,
+            FlatStyle = FlatStyle.Flat,
+            DisplayStyle = DataGridViewComboBoxDisplayStyle.Nothing,
+            Items = { "Chưa up Facebook", "Đã up Facebook" },
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
 
         _grid.CellClick += GridCellClick;
         _grid.CellEndEdit += GridCellEndEdit;
         _grid.CellDoubleClick += GridCellDoubleClick;
         _grid.DataError += (_, e) => e.ThrowException = false;
 
+        _sidebar = new Panel
+        {
+            Dock = DockStyle.Left,
+            Width = 220,
+            BackColor = Color.White,
+            Padding = new Padding(0, 0, 16, 0)
+        };
+        
+        var sidebarHeaderPanel = new Panel { Dock = DockStyle.Top, Height = 32 };
+        var sidebarTitle = new Label
+        {
+            Text = "THƯ MỤC (CHIẾN DỊCH)",
+            Dock = DockStyle.Fill,
+            Font = new Font("Segoe UI Semibold", 9F),
+            ForeColor = Color.FromArgb(96, 82, 218),
+            TextAlign = ContentAlignment.MiddleLeft
+        };
+        
+        var btnManageFolders = new Button
+        {
+            Text = "⚙️",
+            Dock = DockStyle.Right,
+            Width = 32,
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand
+        };
+        btnManageFolders.FlatAppearance.BorderSize = 0;
+        btnManageFolders.Click += (_, _) => FolderCrudRequested?.Invoke(this, EventArgs.Empty);
+        
+        sidebarHeaderPanel.Controls.Add(sidebarTitle);
+        sidebarHeaderPanel.Controls.Add(btnManageFolders);
+
+        _folderList = new CheckedListBox
+        {
+            Dock = DockStyle.Fill,
+            BorderStyle = BorderStyle.None,
+            Font = new Font("Segoe UI", 9F),
+            CheckOnClick = true,
+            BackColor = Color.White,
+            DisplayMember = "Name",
+            ValueMember = "Id"
+        };
+        _folderList.ItemCheck += (_, _) => BeginInvoke(new Action(ApplyFilter));
+        _sidebar.Controls.Add(_folderList);
+        _sidebar.Controls.Add(sidebarHeaderPanel);
+
         Controls.Add(_grid);
+        Controls.Add(_sidebar);
         Controls.Add(toolbar);
         Controls.Add(header);
     }
 
-    public void SetProducts(IReadOnlyList<JobItem> products)
+    public void SetData(IReadOnlyList<JobItem> products, IReadOnlyList<FolderItem> folders)
     {
-        _grid.Rows.Clear();
-        foreach (var product in products)
-            AddProductRow(product);
-        RefreshSuggestedLinks();
+        _allProducts = products ?? [];
+        _allFolders = folders ?? [];
+        UpdateFolderList();
+        ApplyFilter();
+    }
+
+    private void UpdateFolderList()
+    {
+        var checkedIds = _folderList.CheckedItems.Cast<FolderItem>().Select(f => f.Id).ToHashSet();
+        _folderList.Items.Clear();
+        
+        var unassigned = new FolderItem { Id = 0, Name = "[Chưa phân loại]" };
+        _folderList.Items.Add(unassigned, checkedIds.Contains(0));
+        
+        foreach (var folder in _allFolders)
+        {
+            _folderList.Items.Add(folder, checkedIds.Contains(folder.Id));
+        }
+    }
+
+    private void ApplyFilter()
+    {
+        if (_isFiltering) return;
+        _isFiltering = true;
+        try
+        {
+            _grid.Rows.Clear();
+            var checkedIds = _folderList.CheckedItems.Cast<FolderItem>().Select(f => f.Id).ToHashSet();
+            
+            for (var i = 0; i < _allProducts.Count; i++)
+            {
+                var product = _allProducts[i];
+                var folderId = product.FolderId ?? 0;
+                
+                if (checkedIds.Count == 0 || checkedIds.Contains(folderId))
+                {
+                    AddProductRow(i, product);
+                }
+            }
+            RefreshSuggestedLinks();
+        }
+        finally
+        {
+            _isFiltering = false;
+        }
+    }
+    
+
+    public void FilterByFolder(int folderId)
+    {
+        for (int i = 0; i < _folderList.Items.Count; i++)
+        {
+            if (_folderList.Items[i] is FolderItem folder)
+            {
+                _folderList.SetItemChecked(i, folderId == -1 || folder.Id == folderId);
+            }
+        }
+        ApplyFilter();
+    }
+
+    public IReadOnlyList<JobItem> GetFilteredJobs()
+    {
+        var checkedIds = _folderList.CheckedItems.Cast<FolderItem>().Select(f => f.Id).ToHashSet();
+        if (checkedIds.Count == 0) return _allProducts;
+        return _allProducts.Where(p => checkedIds.Contains(p.FolderId ?? 0)).ToList();
     }
 
     public void UpdateProduct(int index, JobItem product)
     {
-        if (index < 0 || index >= _grid.Rows.Count) return;
-        var row = _grid.Rows[index];
+        DataGridViewRow? targetRow = null;
+        foreach (DataGridViewRow r in _grid.Rows)
+        {
+            if (r.Tag is int idx && idx == index)
+            {
+                targetRow = r;
+                break;
+            }
+        }
+        if (targetRow == null) return;
+        var row = targetRow;
         row.Cells["VideoPath"].Value = product.VideoPath;
         row.Cells["Title"].Value = product.Title;
         row.Cells["SuggestedAffLink"].Value = string.Empty;
         row.Cells["ShopeeAffLink"].Value = product.ShopeeAffLink;
         row.Cells["Status"].Value = product.Status;
         row.Cells["ShopeeStatus"].Value = product.ShopeeStatus;
-        row.Cells["ShopeeStatus"].Style.ForeColor = GetStatusColor(product.ShopeeStatus);
+        row.Cells["FbStatus"].Value = product.FbStatus;
+        row.Cells["ShopeeStatus"].Style.ForeColor = GetStatusColor(product.ShopeeStatus, "Đã up Shopee");
+        row.Cells["FbStatus"].Style.ForeColor = GetStatusColor(product.FbStatus, "Đã up Facebook");
         StyleStatusCell(row.Cells["Status"], product.Status);
         RefreshSuggestedLinks();
     }
 
-    public int SelectedIndex => _grid.CurrentRow?.Index ?? -1;
+    public int SelectedIndex => _grid.CurrentRow?.Tag is int idx ? idx : -1;
     public IReadOnlyList<int> SelectedIndices => _grid.SelectedRows
         .Cast<DataGridViewRow>()
-        .Where(row => !row.IsNewRow)
-        .Select(row => row.Index)
+        .Where(row => !row.IsNewRow && row.Tag is int)
+        .Select(row => (int)row.Tag)
         .OrderBy(index => index)
         .ToList();
 
-    private void AddProductRow(JobItem product)
+    private void AddProductRow(int originalIndex, JobItem product)
     {
-        var rowIndex = _grid.Rows.Add(product.VideoPath, product.Title, string.Empty, product.ShopeeAffLink, product.Status, product.ShopeeStatus);
-        _grid.Rows[rowIndex].Cells["ShopeeStatus"].Style.ForeColor = GetStatusColor(product.ShopeeStatus);
-        StyleStatusCell(_grid.Rows[rowIndex].Cells["Status"], product.Status);
-        RefreshSuggestedLinks();
+        var rowIndex = _grid.Rows.Add(product.VideoPath, product.Title, string.Empty, product.ShopeeAffLink, product.Status, product.ShopeeStatus, product.FbStatus);
+        var row = _grid.Rows[rowIndex];
+        row.Tag = originalIndex;
+        row.Cells["ShopeeStatus"].Style.ForeColor = GetStatusColor(product.ShopeeStatus, "Đã up Shopee");
+        row.Cells["FbStatus"].Style.ForeColor = GetStatusColor(product.FbStatus, "Đã up Facebook");
+        StyleStatusCell(row.Cells["Status"], product.Status);
     }
 
     private void AddColumn(string name, string headerText, float fillWeight)
@@ -257,17 +394,20 @@ public sealed class ProductListControl : UserControl
         EditRequested?.Invoke(this, EventArgs.Empty);
     }
 
-    private void RaiseProductChanged(int index)
+    private void RaiseProductChanged(int gridRowIndex)
     {
-        if (index < 0 || index >= _grid.Rows.Count) return;
+        if (gridRowIndex < 0 || gridRowIndex >= _grid.Rows.Count) return;
 
-        var row = _grid.Rows[index];
-        ProductChanged?.Invoke(this, new ProductChangedEventArgs(index, new JobItem
+        var row = _grid.Rows[gridRowIndex];
+        if (row.Tag is not int originalIndex) return;
+
+        ProductChanged?.Invoke(this, new ProductChangedEventArgs(originalIndex, new JobItem
         {
             VideoPath = Convert.ToString(row.Cells["VideoPath"].Value) ?? string.Empty,
             Title = Convert.ToString(row.Cells["Title"].Value) ?? string.Empty,
             ShopeeAffLink = Convert.ToString(row.Cells["ShopeeAffLink"].Value) ?? string.Empty,
-            ShopeeStatus = Convert.ToString(row.Cells["ShopeeStatus"].Value) ?? "Chưa up Shopee"
+            ShopeeStatus = Convert.ToString(row.Cells["ShopeeStatus"].Value) ?? "Chưa up Shopee",
+            FbStatus = Convert.ToString(row.Cells["FbStatus"].Value) ?? "Chưa up Facebook"
         }));
     }
 
@@ -366,8 +506,8 @@ public sealed class ProductListControl : UserControl
         };
     }
 
-    private static Color GetStatusColor(string status)
-        => status == "Đã up Shopee"
+    private static Color GetStatusColor(string status, string successText)
+        => status == successText
             ? Color.FromArgb(0, 161, 112)
             : Color.FromArgb(192, 133, 37);
 
@@ -394,6 +534,7 @@ public sealed class ProductListControl : UserControl
                 break;
         }
     }
+
 }
 
 public sealed class ProductChangedEventArgs(int index, JobItem product) : EventArgs
@@ -401,3 +542,4 @@ public sealed class ProductChangedEventArgs(int index, JobItem product) : EventA
     public int Index { get; } = index;
     public JobItem Product { get; } = product;
 }
+

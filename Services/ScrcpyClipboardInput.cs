@@ -161,7 +161,7 @@ public sealed class ScrcpyClipboardInput
             var title = NativeMethods.GetWindowTitle(handle);
             if (string.IsNullOrWhiteSpace(title)) return true;
             if (title.Contains("FlowPilot", StringComparison.OrdinalIgnoreCase) ||
-                title.Contains("Shopee Video Studio", StringComparison.OrdinalIgnoreCase)) return true;
+                title.Contains("Multi-Platform Studio", StringComparison.OrdinalIgnoreCase)) return true;
 
             windows.Add((handle, title));
             return true;

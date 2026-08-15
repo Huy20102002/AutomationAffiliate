@@ -54,15 +54,23 @@ public sealed class WorkflowEngine
     }
 
     public async Task<DeviceData> ExecuteWorkflowAsync(
-        List<WorkflowStep> steps,
+        IReadOnlyList<WorkflowStep> steps,
         JobItem job,
         DeviceData device,
         CancellationToken ct,
         IProgress<string>? progress = null,
         IReadOnlyList<WorkflowVariable>? variables = null,
         Action<int>? onStepStarted = null,
-        bool skipOpenApp = false)
+        string targetPlatform = "Shopee",
+        bool skipOpenApp = false,
+        Func<ShopeeVideoUploader.Models.JobItem, Task>? preJobAction = null)
     {
+        if (preJobAction != null)
+        {
+            progress?.Report("[AI] Đang sinh tiêu đề chuẩn SEO...");
+            await preJobAction(job);
+        }
+
         for (var i = 0; i < steps.Count; i++)
         {
             ct.ThrowIfCancellationRequested();
@@ -100,20 +108,30 @@ public sealed class WorkflowEngine
             }
 
             if (step.Type != StepType.Delay && step.DelayAfterMs > 0)
-                await Task.Delay(step.DelayAfterMs, ct);
+            {
+                var actualDelay = step.DelayAfterMs;
+                if (step.DelayMaxMs.HasValue && step.DelayMaxMs.Value > step.DelayAfterMs) {
+                    actualDelay = new Random().Next(step.DelayAfterMs, step.DelayMaxMs.Value + 1);
+                }
+                await Task.Delay(actualDelay, ct);
+            }
         }
         return device;
     }
 
     public async Task<DeviceData> RunAllJobsAsync(
-        List<WorkflowStep> steps,
-        List<JobItem> jobs,
+        IReadOnlyList<WorkflowStep> steps,
+        IReadOnlyList<JobItem> jobs,
         DeviceData device,
         CancellationToken ct,
         Action<int, string, string>? onJobUpdate = null,
+        string targetPlatform = "Shopee",
         IReadOnlyList<WorkflowVariable>? variables = null,
         Action<int>? onStepStarted = null,
-        bool skipOpenAppAfterFirstJob = true)
+        bool skipOpenAppAfterFirstJob = true,
+        Func<ShopeeVideoUploader.Models.JobItem, Task>? preJobAction = null,
+        int delayBetweenJobsMinMinutes = 0,
+        int delayBetweenJobsMaxMinutes = 0)
     {
         var hasOpenAppStep = steps.Any(step => step.Type == StepType.OpenApp);
         var hasPushVideoStep = steps.Any(step => step.Type == StepType.PushVideo);
@@ -123,11 +141,18 @@ public sealed class WorkflowEngine
         {
             ct.ThrowIfCancellationRequested();
             var job = jobs[i];
-            if (job.Status == "Thành công" || job.ShopeeStatus == "Đã up Shopee") continue;
+            
+            if (targetPlatform == "Shopee" && job.ShopeeStatus == "Đã up Shopee") continue;
+            if (targetPlatform == "Facebook" && job.FbStatus == "Đã up Facebook") continue;
 
             var recoveryAttempted = false;
             try
             {
+                if (preJobAction != null)
+                {
+                    onJobUpdate?.Invoke(i, "Đang chạy...", "[AI] Đang sinh tiêu đề chuẩn SEO...");
+                    await preJobAction(job);
+                }
                 job.Status = "Đang chạy";
                 job.Log = string.Empty;
                 onJobUpdate?.Invoke(i, job.Status, string.Empty);
@@ -149,11 +174,26 @@ public sealed class WorkflowEngine
                     skipOpenApp: skipOpenAppAfterFirstJob && hasOpenAppStep && appOpenedInThisRun);
                 if (hasOpenAppStep)
                     appOpenedInThisRun = true;
-                job.ShopeeStatus = "Đã up Shopee";
+                if (targetPlatform == "Facebook") job.FbStatus = "Đã up Facebook";
+                else job.ShopeeStatus = "Đã up Shopee";
                 job.Status = "Thành công";
                 job.Log = DeleteLocalVideosAfterSuccess(steps, jobs, i, job, variables);
                 onJobUpdate?.Invoke(i, job.Status, job.Log);
                 Logger.Info($"Job #{job.Id}: SUCCESS");
+
+                if (i < jobs.Count - 1 && (delayBetweenJobsMinMinutes > 0 || delayBetweenJobsMaxMinutes > 0))
+                {
+                    var delayMin = Math.Min(delayBetweenJobsMinMinutes, delayBetweenJobsMaxMinutes);
+                    var delayMax = Math.Max(delayBetweenJobsMinMinutes, delayBetweenJobsMaxMinutes);
+                    var randomDelayMinutes = new Random().Next(delayMin, delayMax + 1);
+                    if (randomDelayMinutes > 0)
+                    {
+                        var delayMs = randomDelayMinutes * 60 * 1000;
+                        Logger.Info($"Đang chờ {randomDelayMinutes} phút trước khi chạy video tiếp theo...");
+                        onJobUpdate?.Invoke(i, "Thành công", $"Chờ {randomDelayMinutes} phút...");
+                        await Task.Delay(delayMs, ct);
+                    }
+                }
             }
             catch (UiAutomationNotReadyException ex) when (!recoveryAttempted)
             {
@@ -195,7 +235,8 @@ public sealed class WorkflowEngine
                         skipOpenApp: false);
                     if (hasOpenAppStep)
                         appOpenedInThisRun = true;
-                    job.ShopeeStatus = "Đã up Shopee";
+                    if (targetPlatform == "Facebook") job.FbStatus = "Đã up Facebook";
+                    else job.ShopeeStatus = "Đã up Shopee";
                     job.Status = "Thành công";
                     job.Log = DeleteLocalVideosAfterSuccess(steps, jobs, i, job, variables);
                     onJobUpdate?.Invoke(i, job.Status, job.Log);
@@ -269,6 +310,19 @@ public sealed class WorkflowEngine
                 var inputText = ResolveInputText(step, job, variables);
                 if (string.IsNullOrWhiteSpace(inputText))
                     throw new InvalidOperationException($"Sản phẩm #{job.Id} không có dữ liệu để nhập cho cột '{step.BindingColumn}'.");
+                
+                if (step.UseAiForText)
+                {
+                    var configService = new AiConfigService();
+                    var config = configService.Load();
+                    if (!string.IsNullOrWhiteSpace(config.ApiKey))
+                    {
+                        var aiService = new AiTitleService();
+                        Logger.Info($"[AI] Đang sinh nội dung bằng AI...");
+                        inputText = await aiService.GenerateTitleAsync(config, inputText);
+                    }
+                }
+
                 Logger.Info($"[INPUT] Job #{job.Id}: nhập \"{(inputText.Length > 80 ? inputText[..80] + "..." : inputText)}\"");
                 try
                 {
@@ -307,8 +361,14 @@ public sealed class WorkflowEngine
                 break;
 
             case StepType.Delay:
-                await Task.Delay(step.DelayAfterMs, ct);
+            {
+                var actualDelay = step.DelayAfterMs;
+                if (step.DelayMaxMs.HasValue && step.DelayMaxMs.Value > step.DelayAfterMs) {
+                    actualDelay = new Random().Next(step.DelayAfterMs, step.DelayMaxMs.Value + 1);
+                }
+                await Task.Delay(actualDelay, ct);
                 break;
+            }
 
             case StepType.Swipe:
                 await _adb.SwipeAsync(device, step.X, step.Y, step.X2, step.Y2, step.SwipeDurationMs);
@@ -362,7 +422,7 @@ public sealed class WorkflowEngine
             .ToArray());
         if (string.IsNullOrWhiteSpace(safeStem)) safeStem = "video";
         if (safeStem.Length > 80) safeStem = safeStem[..80];
-        return $"flowpilot_{job.Id}_{safeStem}{extension}";
+        return $"flowpilot_{job.Id}_{safeStem}_{DateTime.Now:yyyyMMdd_HHmmss}{extension}";
     }
 
     private static string DeleteLocalVideosAfterSuccess(

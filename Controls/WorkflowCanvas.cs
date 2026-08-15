@@ -22,7 +22,8 @@ public sealed class WorkflowCanvas : ScrollableControl
     private bool _wasDragged;
     private bool _isPanning;
     private Point _panStartPoint;
-    private Point _panStartScroll;
+    private PointF _panStartOffset;
+    private PointF _panOffset = new PointF(0, 0);
     private float _zoom = 1f;
 
     public event EventHandler<int>? StepSelected;
@@ -66,7 +67,6 @@ public sealed class WorkflowCanvas : ScrollableControl
         BackColor = Color.FromArgb(12, 17, 30);
         ForeColor = Color.FromArgb(228, 235, 246);
         TabStop = true;
-        AutoScroll = true;
         AllowDrop = true;
         DragEnter += (_, e) =>
         {
@@ -96,7 +96,7 @@ public sealed class WorkflowCanvas : ScrollableControl
         _steps = steps;
         if (_selectedIndex >= _steps.Count)
             _selectedIndex = _steps.Count - 1;
-        UpdateScrollSize();
+        
         Invalidate();
     }
 
@@ -114,39 +114,31 @@ public sealed class WorkflowCanvas : ScrollableControl
 
     private void SetZoom(float value, bool resetScroll = false)
     {
-        var next = Math.Clamp((float)Math.Round(value, 1), 0.6f, 1.8f);
+        var next = Math.Clamp((float)Math.Round(value, 1), 0.1f, 3.0f);
         if (Math.Abs(next - _zoom) < 0.01f) return;
 
-        // Giữ nguyên điểm đang nằm giữa vùng nhìn để zoom không làm canvas trôi/cắt node.
         var oldZoom = _zoom;
         var viewportCenter = new Point(ClientSize.Width / 2, ClientSize.Height / 2);
-        var logicalCenter = ToCanvasPoint(viewportCenter);
+        
+        var logicalCenter = new PointF(
+            (viewportCenter.X - _panOffset.X) / oldZoom,
+            (viewportCenter.Y - _panOffset.Y) / oldZoom);
+
         _zoom = next;
-        UpdateScrollSize();
-        if (resetScroll || next < oldZoom)
+
+        if (resetScroll)
         {
-            // Khi thu nhỏ, luôn quay về đầu canvas để node đầu tiên không bị che bởi scroll cũ.
-            SetScrollPosition(Point.Empty);
+            _panOffset = new PointF(0, 0);
         }
         else
         {
-            const int canvasMargin = 260;
-            var targetScroll = new Point(
-                (int)Math.Round((logicalCenter.X + canvasMargin) * _zoom - viewportCenter.X),
-                (int)Math.Round((logicalCenter.Y + canvasMargin) * _zoom - viewportCenter.Y));
-            SetScrollPosition(targetScroll);
+            _panOffset = new PointF(
+                viewportCenter.X - logicalCenter.X * _zoom,
+                viewportCenter.Y - logicalCenter.Y * _zoom);
         }
+        
         ZoomChanged?.Invoke(this, _zoom);
         Invalidate();
-    }
-
-    private void SetScrollPosition(Point position)
-    {
-        var maxX = Math.Max(0, HorizontalScroll.Maximum - HorizontalScroll.LargeChange + 1);
-        var maxY = Math.Max(0, VerticalScroll.Maximum - VerticalScroll.LargeChange + 1);
-        HorizontalScroll.Value = Math.Clamp(position.X, HorizontalScroll.Minimum, maxX);
-        VerticalScroll.Value = Math.Clamp(position.Y, VerticalScroll.Minimum, maxY);
-        PerformLayout();
     }
 
     protected override void OnMouseWheel(MouseEventArgs e)
@@ -157,6 +149,8 @@ public sealed class WorkflowCanvas : ScrollableControl
             else if (e.Delta < 0) ZoomOut();
             return;
         }
+        _panOffset.Y += e.Delta;
+        Invalidate();
         base.OnMouseWheel(e);
     }
 
@@ -167,7 +161,7 @@ public sealed class WorkflowCanvas : ScrollableControl
         {
             var deltaX = e.X - _panStartPoint.X;
             var deltaY = e.Y - _panStartPoint.Y;
-            SetScrollPosition(new Point(_panStartScroll.X - deltaX, _panStartScroll.Y - deltaY));
+            _panOffset = new PointF(_panStartOffset.X + deltaX, _panStartOffset.Y + deltaY);
             _wasDragged = Math.Abs(deltaX) > 2 || Math.Abs(deltaY) > 2;
             Cursor = Cursors.SizeAll;
             Invalidate();
@@ -177,10 +171,11 @@ public sealed class WorkflowCanvas : ScrollableControl
         {
             var point = ToCanvasPoint(e.Location);
             var step = _steps[_dragIndex];
-            step.CanvasX = Math.Max(20, point.X - _dragOffset.X);
-            step.CanvasY = Math.Max(20, point.Y - _dragOffset.Y);
+            var newX = point.X - _dragOffset.X;
+            var newY = point.Y - _dragOffset.Y;
+            step.CanvasX = newX == -1 ? -2 : newX;
+            step.CanvasY = newY == -1 ? -2 : newY;
             _wasDragged = true;
-            UpdateScrollSize();
             StepMoved?.Invoke(this, _dragIndex);
             Invalidate();
             return;
@@ -240,7 +235,7 @@ public sealed class WorkflowCanvas : ScrollableControl
         {
             _isPanning = true;
             _panStartPoint = e.Location;
-            _panStartScroll = new Point(HorizontalScroll.Value, VerticalScroll.Value);
+            _panStartOffset = _panOffset;
             _wasDragged = false;
             Capture = true;
             Cursor = Cursors.SizeAll;
@@ -299,7 +294,7 @@ public sealed class WorkflowCanvas : ScrollableControl
         base.OnPaint(e);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         e.Graphics.Clear(BackColor);
-        e.Graphics.TranslateTransform(AutoScrollPosition.X, AutoScrollPosition.Y);
+        e.Graphics.TranslateTransform(_panOffset.X, _panOffset.Y);
         e.Graphics.ScaleTransform(_zoom, _zoom);
 
         DrawGrid(e.Graphics);
@@ -330,10 +325,16 @@ public sealed class WorkflowCanvas : ScrollableControl
     private void DrawGrid(Graphics g)
     {
         using var pen = new Pen(_lightTheme ? Color.FromArgb(222, 235, 245) : Color.FromArgb(22, 40, 58), 1);
-        var logicalWidth = (int)Math.Ceiling(Width / _zoom) + 64;
-        var logicalHeight = (int)Math.Ceiling(Height / _zoom) + 64;
-        for (var x = 0; x < logicalWidth; x += 32) g.DrawLine(pen, x, 0, x, logicalHeight);
-        for (var y = 0; y < logicalHeight; y += 32) g.DrawLine(pen, 0, y, logicalWidth, y);
+        var startX = (int)(-_panOffset.X / _zoom);
+        var startY = (int)(-_panOffset.Y / _zoom);
+        var logicalWidth = startX + (int)Math.Ceiling(Width / _zoom) + 64;
+        var logicalHeight = startY + (int)Math.Ceiling(Height / _zoom) + 64;
+        
+        var firstLineX = (startX / 32) * 32;
+        var firstLineY = (startY / 32) * 32;
+        
+        for (var x = firstLineX; x < logicalWidth; x += 32) g.DrawLine(pen, x, startY, x, logicalHeight);
+        for (var y = firstLineY; y < logicalHeight; y += 32) g.DrawLine(pen, startX, y, logicalWidth, y);
     }
 
     private void DrawEmptyState(Graphics g)
@@ -418,7 +419,7 @@ public sealed class WorkflowCanvas : ScrollableControl
 
         for (var i = 0; i < _steps.Count; i++)
         {
-            if (_steps[i].CanvasX >= 0 && _steps[i].CanvasY >= 0)
+            if (_steps[i].CanvasX != -1 && _steps[i].CanvasY != -1)
             {
                 result.Add(new Rectangle(canvasMargin + _steps[i].CanvasX, canvasMargin + _steps[i].CanvasY, nodeWidth, nodeHeight));
                 continue;
@@ -435,7 +436,7 @@ public sealed class WorkflowCanvas : ScrollableControl
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
-        UpdateScrollSize();
+        
     }
 
     private void UpdateScrollSize()
@@ -452,8 +453,8 @@ public sealed class WorkflowCanvas : ScrollableControl
         var logicalCanvasWidth = canvasMargin * 2 + layoutMargin * 2 + columns * 188 + Math.Max(0, columns - 1) * 58;
         foreach (var step in _steps)
         {
-            if (step.CanvasX >= 0) logicalCanvasWidth = Math.Max(logicalCanvasWidth, canvasMargin + step.CanvasX + 188 + canvasMargin);
-            if (step.CanvasY >= 0) logicalHeight = Math.Max(logicalHeight, canvasMargin + step.CanvasY + nodeHeight + canvasMargin);
+            if (step.CanvasX != -1) logicalCanvasWidth = Math.Max(logicalCanvasWidth, canvasMargin + step.CanvasX + 188 + canvasMargin);
+            if (step.CanvasY != -1) logicalHeight = Math.Max(logicalHeight, canvasMargin + step.CanvasY + nodeHeight + canvasMargin);
         }
         AutoScrollMinSize = new Size(
             Math.Max(ClientSize.Width, (int)Math.Ceiling(logicalCanvasWidth * _zoom)),
@@ -475,8 +476,8 @@ public sealed class WorkflowCanvas : ScrollableControl
     {
         const int canvasMargin = 260;
         return new Point(
-            (int)Math.Round((clientPoint.X - AutoScrollPosition.X) / _zoom - canvasMargin),
-            (int)Math.Round((clientPoint.Y - AutoScrollPosition.Y) / _zoom - canvasMargin));
+            (int)Math.Round((clientPoint.X - _panOffset.X) / _zoom - canvasMargin),
+            (int)Math.Round((clientPoint.Y - _panOffset.Y) / _zoom - canvasMargin));
     }
 
     private static void DrawArrow(Graphics g, Color color, Point end)

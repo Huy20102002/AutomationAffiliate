@@ -134,11 +134,17 @@ public class WorkflowStep
     /// <summary>Thời gian chờ sau khi thực hiện bước (ms)</summary>
     public int DelayAfterMs { get; set; } = 500;
 
+    /// <summary>Thời gian chờ tối đa (ms) để random</summary>
+    public int? DelayMaxMs { get; set; }
+
     /// <summary>Thời gian vuốt cho Swipe (ms). Mặc định 300ms.</summary>
     public int SwipeDurationMs { get; set; } = 300;
 
     /// <summary>Mô tả bước hiển thị trên UI (tùy chọn)</summary>
     public string Description { get; set; } = string.Empty;
+
+    /// <summary>Sử dụng AI để xử lý lại văn bản trước khi nhập (áp dụng cho InputText)</summary>
+    public bool UseAiForText { get; set; }
 
     /// <summary>
     /// Vị trí node trên canvas. Giá trị âm nghĩa là canvas tự xếp layout.
@@ -167,7 +173,7 @@ public class WorkflowStep
             StepType.End => "[Kết thúc] Kết thúc quy trình",
             StepType.InputText => $"[Nhập văn bản] \"{(TextValue.Length > 30 ? TextValue[..30] + "..." : TextValue)}\"",
             StepType.PushVideo => "[Đẩy video] → /sdcard/DCIM/Camera/",
-            StepType.Delay => $"[Chờ] {DelayAfterMs} ms",
+            StepType.Delay => DelayMaxMs.HasValue ? $"[Chờ] {DelayAfterMs}-{DelayMaxMs} ms" : $"[Chờ] {DelayAfterMs} ms",
             StepType.Swipe => $"[Vuốt] ({X},{Y}) → ({X2},{Y2})",
             StepType.OpenApp => $"[Mở ứng dụng] {TextValue}",
             StepType.KeyEvent => $"[Phím hệ thống] {TextValue}",

@@ -9,6 +9,9 @@ public class JobItem
     /// <summary>ID thứ tự</summary>
     public int Id { get; set; }
 
+    /// <summary>ID thư mục (chiến dịch)</summary>
+    public int? FolderId { get; set; }
+
     /// <summary>Đường dẫn file video trên PC (hoặc folder chứa video)</summary>
     public string VideoPath { get; set; } = string.Empty;
 
@@ -25,6 +28,9 @@ public class JobItem
 
     /// <summary>Trạng thái sản phẩm trên Shopee.</summary>
     public string ShopeeStatus { get; set; } = "Chưa up Shopee";
+
+    /// <summary>Trạng thái sản phẩm trên Facebook.</summary>
+    public string FbStatus { get; set; } = "Chưa up Facebook";
 
     /// <summary>Log chi tiết quá trình xử lý</summary>
     public string Log { get; set; } = string.Empty;
@@ -69,6 +75,7 @@ public class JobItem
             case "shopeeafflink": value = ShopeeAffLink; return true;
             case "status": value = Status; return true;
             case "shopeestatus": value = ShopeeStatus; return true;
+            case "fbstatus": value = FbStatus; return true;
             case "id": value = Id.ToString(); return true;
         }
 

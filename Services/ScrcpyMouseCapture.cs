@@ -41,6 +41,7 @@ public sealed class ScrcpyMouseCapture
     }
 
     public sealed record CapturedClick(int X, int Y, string WindowTitle);
+    public sealed record CapturedSwipe(int StartX, int StartY, int EndX, int EndY, string WindowTitle);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr SetWindowsHookEx(int idHook, MouseHookCallback callback, IntPtr hMod, uint dwThreadId);
@@ -72,6 +73,78 @@ public sealed class ScrcpyMouseCapture
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr GetModuleHandle(string? moduleName);
 
+    private const int WmLButtonUp = 0x0202;
+
+    public async Task<CapturedSwipe?> CaptureNextSwipeAsync(
+        string expectedWindowTitle,
+        int screenWidth,
+        int screenHeight,
+        CancellationToken cancellationToken)
+    {
+        if (screenWidth <= 0 || screenHeight <= 0)
+            throw new ArgumentOutOfRangeException(nameof(screenWidth), "Chưa có độ phân giải màn hình thiết bị.");
+
+        var completion = new TaskCompletionSource<CapturedSwipe?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        MouseHookCallback? callback = null;
+        IntPtr hook = IntPtr.Zero;
+
+        Point? startPoint = null;
+
+        callback = (code, message, data) =>
+        {
+            if (code >= 0)
+            {
+                if (message == (IntPtr)WmLButtonDown)
+                {
+                    var mouse = Marshal.PtrToStructure<MouseHookStruct>(data);
+                    var root = GetAncestor(WindowFromPoint(mouse.Point), GaRoot);
+                    var title = ReadWindowTitle(root);
+                    var isFlowPilot = title.Contains("FlowPilot", StringComparison.OrdinalIgnoreCase) ||
+                                      title.Contains("Multi-Platform Studio", StringComparison.OrdinalIgnoreCase);
+
+                    if (root != IntPtr.Zero && !isFlowPilot &&
+                        TryMapToDevice(root, mouse.Point, screenWidth, screenHeight, out var point))
+                    {
+                        startPoint = point;
+                    }
+                }
+                else if (message == (IntPtr)WmLButtonUp && startPoint.HasValue)
+                {
+                    var mouse = Marshal.PtrToStructure<MouseHookStruct>(data);
+                    var root = GetAncestor(WindowFromPoint(mouse.Point), GaRoot);
+                    var title = ReadWindowTitle(root);
+
+                    if (root != IntPtr.Zero && TryMapToDevice(root, mouse.Point, screenWidth, screenHeight, out var endPoint))
+                    {
+                        completion.TrySetResult(new CapturedSwipe(startPoint.Value.X, startPoint.Value.Y, endPoint.X, endPoint.Y, title));
+                        startPoint = null;
+                    }
+                }
+            }
+
+            return CallNextHookEx(hook, code, message, data);
+        };
+
+        hook = SetWindowsHookEx(WhMouseLl, callback, GetModuleHandle(null), 0);
+        if (hook == IntPtr.Zero)
+            throw new InvalidOperationException("Không thể bắt sự kiện vuốt trên cửa sổ scrcpy.");
+
+        using var registration = cancellationToken.Register(() => completion.TrySetCanceled(cancellationToken));
+        try
+        {
+            return await completion.Task.ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        finally
+        {
+            UnhookWindowsHookEx(hook);
+            GC.KeepAlive(callback);
+        }
+    }
+
     public async Task<CapturedClick?> CaptureNextClickAsync(
         string expectedWindowTitle,
         int screenWidth,
@@ -93,7 +166,7 @@ public sealed class ScrcpyMouseCapture
                 var root = GetAncestor(WindowFromPoint(mouse.Point), GaRoot);
                 var title = ReadWindowTitle(root);
                 var isFlowPilot = title.Contains("FlowPilot", StringComparison.OrdinalIgnoreCase) ||
-                                  title.Contains("Shopee Video Studio", StringComparison.OrdinalIgnoreCase);
+                                  title.Contains("Multi-Platform Studio", StringComparison.OrdinalIgnoreCase);
                 // Một số bản scrcpy không đặt MainWindowTitle hoặc đặt title rỗng.
                 // Khi người dùng đã chủ động bật chế độ lấy tọa độ, chỉ cần loại trừ cửa sổ FlowPilot.
                 if (root != IntPtr.Zero && !isFlowPilot &&

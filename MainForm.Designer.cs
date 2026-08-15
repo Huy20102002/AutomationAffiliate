@@ -45,6 +45,13 @@ partial class MainForm
     private Control btnStart;
     private Control btnTestWorkflow;
     private Control btnStop;
+    private Guna.UI2.WinForms.Guna2ComboBox cboMainFolderSelect;
+    private Guna.UI2.WinForms.Guna2ComboBox cboWorkflowProfiles;
+    private Control btnAddWorkflowProfile;
+    private Control btnDeleteWorkflowProfile;
+    private Control btnRenameWorkflowProfile;
+    private Control btnManualSaveProfile;
+    private Control btnExportProfile;
     private WorkflowCanvas workflowCanvas;
     private FlowLayoutPanel workflowPalette;
     private FlowLayoutPanel workflowCorePalette;
@@ -75,6 +82,7 @@ partial class MainForm
     private Control btnBrowseVideoPath;
     private CheckBox chkDeleteLocalVideo;
     private CheckBox chkClearDeviceVideos;
+    private CheckBox chkUseAiForText;
     private Guna.UI2.WinForms.Guna2ComboBox cboAppPackage;
     private Control btnRefreshApps;
     private Control btnCaptureCurrentApp;
@@ -86,6 +94,8 @@ partial class MainForm
     private TableLayoutPanel videoOptionsPanel;
     private TableLayoutPanel appOptionsPanel;
     private Panel tapOptionsPanel;
+    private Panel swipeOptionsPanel;
+    private Control btnCaptureSwipeCoordinates;
     private TableLayoutPanel inspectorFields;
     private ProductListControl productListControl;
     private Button navOverview;
@@ -106,7 +116,7 @@ partial class MainForm
         components = new System.ComponentModel.Container();
         SuspendLayout();
 
-        Text = "FlowPilot Â· Shopee Video Studio";
+        Text = "FlowPilot - Multi-Platform Studio";
         ClientSize = new Size(1600, 940);
         MinimumSize = new Size(1260, 760);
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -122,15 +132,15 @@ partial class MainForm
 
         sidebar = new Panel { Dock = DockStyle.Left, Width = 238, BackColor = Color.FromArgb(15, 73, 119), Padding = new Padding(16, 18, 14, 16) };
         var brand = new Label { Text = "◆  FLOWPILOT", AutoSize = true, Location = new Point(18, 20), Font = new Font("Segoe UI Semibold", 14F), ForeColor = Color.FromArgb(96, 82, 218) };
-        var brandSub = new Label { Text = "SHOPEE VIDEO STUDIO", AutoSize = true, Location = new Point(20, 49), Font = new Font("Segoe UI", 7.5F), ForeColor = Color.FromArgb(109, 137, 163) };
+        var brandSub = new Label { Text = "MULTI-PLATFORM STUDIO", AutoSize = true, Location = new Point(20, 49), Font = new Font("Segoe UI", 7.5F), ForeColor = Color.FromArgb(109, 137, 163) };
         sidebar.Controls.Add(brandSub);
         sidebar.Controls.Add(brand);
 
         var navTitle = new Label { Text = "KHÔNG GIAN LÀM VIỆC", AutoSize = true, Location = new Point(20, 101), Font = new Font("Segoe UI Semibold", 8F), ForeColor = Color.FromArgb(114, 117, 134) };
         sidebar.Controls.Add(navTitle);
-        var nav = new FlowLayoutPanel { Location = new Point(14, 124), Size = new Size(208, 250), FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Color.Transparent };
+        var nav = new FlowLayoutPanel { Location = new Point(14, 124), Size = new Size(208, 292), FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Color.Transparent };
         navOverview = CreateNavButton("⌂   Tổng quan", false);
-        navWorkflow = CreateNavButton("⌘   Quy trình Android", true);
+        navWorkflow = CreateNavButton("⌘   Thiết kế Quy trình", true);
         navWorkflowIos = CreateNavButton("⌘   Quy trình iPhone", false);
         navProducts = CreateNavButton("▦   Dữ liệu & công việc", false);
         navDevices = CreateNavButton("◉   Thiết bị", false);
@@ -138,7 +148,7 @@ partial class MainForm
         nav.Controls.AddRange([navOverview, navWorkflow, navWorkflowIos, navProducts, navDevices, navLogs]);
         sidebar.Controls.Add(nav);
 
-        var sideCard = new Panel { Location = new Point(16, 410), Size = new Size(206, 108), BackColor = Color.FromArgb(245, 246, 250), Padding = new Padding(14) };
+        var sideCard = new Panel { Location = new Point(16, 430), Size = new Size(206, 108), BackColor = Color.FromArgb(245, 246, 250), Padding = new Padding(14) };
         var sideCardTitle = new Label { Text = "SẴN SÀNG TỰ ĐỘNG", AutoSize = true, Location = new Point(14, 13), Font = new Font("Segoe UI Semibold", 8.5F), ForeColor = Color.FromArgb(96, 82, 218) };
         var sideCardText = new Label { Text = "Kết nối thiết bị để bắt đầu\nxây dựng quy trình.", AutoSize = true, Location = new Point(14, 39), Font = new Font("Segoe UI", 8.5F), ForeColor = Color.FromArgb(114, 117, 134) };
         sideCard.Controls.Add(sideCardText);
@@ -151,39 +161,69 @@ partial class MainForm
         mainContent = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(246, 250, 254), Padding = new Padding(0) };
         Controls.Add(mainContent);
 
-        topBar = new Panel { Dock = DockStyle.Top, Height = 74, BackColor = Color.White, Padding = new Padding(26, 14, 22, 10) };
-        var title = new Label { Text = "Workflow Studio", AutoSize = true, Location = new Point(26, 12), Font = new Font("Segoe UI Semibold", 18F), ForeColor = Color.FromArgb(231, 240, 249) };
-        var subtitle = new Label { Text = "Thiết kế và chạy tự động hóa video Shopee", AutoSize = true, Location = new Point(28, 43), Font = new Font("Segoe UI", 8.5F), ForeColor = Color.FromArgb(112, 140, 166) };
-        lblDeviceBadge = new Label { Text = "●   Chưa kết nối thiết bị", AutoSize = true, Location = new Point(670, 29), Font = new Font("Segoe UI Semibold", 9F), ForeColor = Color.FromArgb(245, 186, 90) };
-        btnStart = CreateButton("▶  CHẠY QUY TRÌNH", Color.FromArgb(0, 174, 139), 142);
-        btnStart.Location = new Point(0, 18);
-        btnStop = CreateButton("■  DỪNG", Color.FromArgb(151, 54, 74), 82);
-        btnStop.Location = new Point(150, 18);
-        btnStop.Enabled = false;
-        var topActions = new Panel { Dock = DockStyle.Right, Width = 350 };
-        topActions.Controls.Add(btnStop);
-        btnTestWorkflow = CreateButton("▷  CHẠY THỬ", Color.FromArgb(35, 149, 218), 104);
-        btnTestWorkflow.Location = new Point(148, 18);
-        topActions.Controls.Add(btnTestWorkflow);
-        topActions.Controls.Add(btnStart);
-        btnStop.Location = new Point(258, 18);
+        topBar = new Panel { Dock = DockStyle.Top, Height = 74, BackColor = Color.White, Padding = new Padding(0) };
+        
+        // --- LEFT: title block ---
+        var titleBlock = new Panel { Location = new Point(0, 0), Size = new Size(240, 74), BackColor = Color.Transparent };
+        var title = new Label { Text = "Workflow Studio", AutoSize = true, Location = new Point(20, 8), Font = new Font("Segoe UI Semibold", 14F), ForeColor = Color.FromArgb(31, 31, 44) };
+        var subtitle = new Label { Text = "Thiết kế và chạy quy trình video đa nền tảng", AutoSize = true, Location = new Point(22, 40), Font = new Font("Segoe UI", 7.5F), ForeColor = Color.FromArgb(114, 117, 134) };
+        titleBlock.Controls.AddRange([title, subtitle]);
+        topBar.Controls.Add(titleBlock);
+        
+        // --- CENTER: device connection row ---
+        var centerPanel = new Panel { Location = new Point(240, 0), Size = new Size(380, 74), BackColor = Color.Transparent, Anchor = AnchorStyles.Top | AnchorStyles.Left };
         cboDevices = CreateComboBox(150, Color.FromArgb(244, 248, 252));
-        cboDevices.Font = new Font("Segoe UI", 8F);
-        cboDevices.Margin = new Padding(0, 2, 3, 0);
-        btnRefreshDevices = CreateButton("»", Color.FromArgb(228, 240, 249), 34);
-        btnRefreshDevices.Margin = new Padding(1, 0, 1, 0);
-        btnConnect = CreateButton("Kết nối", Color.FromArgb(10, 151, 205), 72);
-        btnConnect.Margin = new Padding(1, 0, 1, 0);
-        btnDisconnect = CreateButton("Ngắt kết nối", Color.FromArgb(238, 225, 228), 88);
-        btnDisconnect.Margin = new Padding(1, 0, 1, 0);
+        cboDevices.Font = new Font("Segoe UI", 8.5F);
+        cboDevices.Location = new Point(0, 22);
+        if (cboDevices is Guna.UI2.WinForms.Guna2ComboBox gunaDevices) { gunaDevices.BorderRadius = 6; gunaDevices.Size = new Size(150, 32); }
+        btnRefreshDevices = CreateButton("»", Color.FromArgb(228, 240, 249), 32);
+        btnRefreshDevices.Location = new Point(154, 22);
+        if (btnRefreshDevices is Guna.UI2.WinForms.Guna2Button rfBtn) { rfBtn.ForeColor = Color.FromArgb(70, 70, 85); rfBtn.BorderRadius = 6; rfBtn.Size = new Size(32, 32); }
+        btnConnect = CreateButton("Kết nối", Color.FromArgb(10, 151, 205), 80);
+        btnConnect.Location = new Point(190, 22);
+        if (btnConnect is Guna.UI2.WinForms.Guna2Button cnBtn) { cnBtn.BorderRadius = 6; cnBtn.Size = new Size(80, 32); }
+        btnDisconnect = CreateButton("Ngắt", Color.FromArgb(235, 237, 242), 60);
+        btnDisconnect.Location = new Point(274, 22);
+        if (btnDisconnect is Guna.UI2.WinForms.Guna2Button dcBtn) { dcBtn.ForeColor = Color.FromArgb(70, 70, 85); dcBtn.BorderRadius = 6; dcBtn.Size = new Size(60, 32); }
         btnDisconnect.Enabled = false;
-        var deviceTools = new FlowLayoutPanel { Location = new Point(300, 18), Size = new Size(360, 34), FlowDirection = FlowDirection.LeftToRight, WrapContents = false, BackColor = Color.Transparent, Anchor = AnchorStyles.Top | AnchorStyles.Left };
-        deviceTools.Controls.AddRange([cboDevices, btnRefreshDevices, btnConnect, btnDisconnect]);
-        topBar.Controls.Add(topActions);
-        topBar.Controls.Add(deviceTools);
-        topBar.Controls.Add(lblDeviceBadge);
-        topBar.Controls.Add(subtitle);
-        topBar.Controls.Add(title);
+        lblDeviceBadge = new Label { Text = "●   Chưa kết nối thiết bị", AutoSize = true, Location = new Point(2, 4), Font = new Font("Segoe UI Semibold", 7.5F), ForeColor = Color.FromArgb(245, 186, 90), BackColor = Color.Transparent };
+        centerPanel.Controls.AddRange([lblDeviceBadge, cboDevices, btnRefreshDevices, btnConnect, btnDisconnect]);
+        topBar.Controls.Add(centerPanel);
+        
+        // --- RIGHT: folder select + action buttons ---
+        var rightPanel = new Panel { Dock = DockStyle.Right, Width = 440, BackColor = Color.Transparent };
+        
+        cboMainFolderSelect = new Guna.UI2.WinForms.Guna2ComboBox
+        {
+            Location = new Point(0, 20),
+            Size = new Size(165, 32),
+            FillColor = Color.FromArgb(244, 248, 252), BorderRadius = 6, BorderThickness = 1,
+            BorderColor = Color.FromArgb(190, 198, 211),
+            ForeColor = Color.FromArgb(31, 31, 44),
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            DisplayMember = "Name", ValueMember = "Id",
+            Font = new Font("Segoe UI", 8.5F)
+        };
+        rightPanel.Controls.Add(cboMainFolderSelect);
+        
+        btnStart = CreateButton("▶  CHẠY QUY TRÌNH", Color.FromArgb(96, 82, 218), 150);
+        btnStart.Location = new Point(170, 20);
+        if (btnStart is Guna.UI2.WinForms.Guna2Button stBtn) { stBtn.Size = new Size(150, 32); stBtn.BorderRadius = 6; }
+        rightPanel.Controls.Add(btnStart);
+        
+        btnTestWorkflow = CreateButton("▷  CHẠY THỬ", Color.FromArgb(35, 149, 218), 104);
+        btnTestWorkflow.Location = new Point(324, 20);
+        if (btnTestWorkflow is Guna.UI2.WinForms.Guna2Button twBtn) { twBtn.Size = new Size(104, 32); twBtn.BorderRadius = 6; }
+        rightPanel.Controls.Add(btnTestWorkflow);
+        
+        btnStop = CreateButton("■  DỪNG", Color.FromArgb(220, 38, 38), 80);
+        btnStop.Location = new Point(324, 20);
+        btnStop.Enabled = false;
+        if (btnStop is Guna.UI2.WinForms.Guna2Button spBtn) { spBtn.Size = new Size(80, 32); spBtn.BorderRadius = 6; }
+        rightPanel.Controls.Add(btnStop);
+        
+        topBar.Controls.Add(rightPanel);
+
         mainContent.Controls.Add(topBar);
 
         viewHost = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(246, 250, 254) };
@@ -228,6 +268,16 @@ partial class MainForm
     private void BuildWorkflowPanel()
     {
         var heading = CreateHeading("SƠ ĐỒ QUY TRÌNH", "Kéo khối để sắp xếp · thả vào khối khác để đổi thứ tự", out lblStepCount);
+        var profilePanel = new FlowLayoutPanel { Dock = DockStyle.Right, Width = 460, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = new Padding(0, 8, 14, 0) };
+        btnDeleteWorkflowProfile = CreateButton("Xóa", Color.FromArgb(241, 226, 229), 50);
+        btnDeleteWorkflowProfile.ForeColor = Color.FromArgb(219, 82, 91);
+        btnRenameWorkflowProfile = CreateButton("Sửa", Color.FromArgb(228, 240, 249), 50);
+        btnAddWorkflowProfile = CreateButton("+ Mới", Color.FromArgb(10, 151, 205), 60);
+        btnManualSaveProfile = CreateButton("Lưu", Color.FromArgb(34, 193, 108), 50);
+        btnExportProfile = CreateButton("Xuất", Color.FromArgb(64, 169, 255), 50);
+        cboWorkflowProfiles = CreateComboBox(150, Color.White);
+        profilePanel.Controls.AddRange([btnDeleteWorkflowProfile, btnRenameWorkflowProfile, btnAddWorkflowProfile, btnManualSaveProfile, btnExportProfile, cboWorkflowProfiles]);
+        heading.Controls.Add(profilePanel);
         panelWorkflowContainer.Controls.Add(heading);
         var toolbar = new Panel { Dock = DockStyle.Top, Height = 43, Padding = new Padding(14, 4, 14, 5), AutoScroll = true };
         cboStepType = CreateComboBox(145, Color.FromArgb(24, 35, 51));
@@ -242,9 +292,9 @@ partial class MainForm
         btnMoveUp.Location = new Point(335, 4);
         btnMoveDown = CreateButton("↓", Color.FromArgb(34, 49, 70), 32);
         btnMoveDown.Location = new Point(371, 4);
-        btnSaveWorkflow = CreateButton("Lưu", Color.FromArgb(34, 49, 70), 50);
+        btnSaveWorkflow = CreateButton("Xuất", Color.FromArgb(34, 49, 70), 50);
         btnSaveWorkflow.Location = new Point(410, 4);
-        btnLoadWorkflow = CreateButton("Mở", Color.FromArgb(34, 49, 70), 50);
+        btnLoadWorkflow = CreateButton("Nhập", Color.FromArgb(34, 49, 70), 50);
         btnLoadWorkflow.Location = new Point(470, 4);
         btnClearWorkflow = CreateButton("Làm sạch", Color.FromArgb(67, 43, 57), 68);
         btnClearWorkflow.Location = new Point(530, 4);
@@ -288,9 +338,11 @@ partial class MainForm
         ResizePaletteItems();
         workflowPalette.AutoScrollMinSize = new Size(0, Math.Max(700, workflowPalette.PreferredSize.Height + 16));
         workflowPalette.AutoScrollPosition = Point.Empty;
-        var paletteShell = new Panel { Dock = DockStyle.Left, Width = 194, BackColor = Color.FromArgb(248, 251, 253) };
+        var paletteShell = new Panel { Dock = DockStyle.Left, Width = 195, BackColor = Color.FromArgb(248, 251, 253) };
+        var borderRight = new Panel { Dock = DockStyle.Right, Width = 1, BackColor = Color.FromArgb(210, 220, 230) };
         paletteShell.Controls.Add(workflowPalette);
         paletteShell.Controls.Add(workflowCorePalette);
+        paletteShell.Controls.Add(borderRight);
         builderArea.Controls.Add(paletteShell);
         workflowCanvas = new WorkflowCanvas { Dock = DockStyle.Fill, Margin = new Padding(0) };
         builderArea.Controls.Add(workflowCanvas);
@@ -323,7 +375,7 @@ partial class MainForm
         lblSelectedStep = new Label { Text = "Chưa chọn bước", Dock = DockStyle.Top, Height = 40, Padding = new Padding(14, 12, 14, 4), ForeColor = Color.FromArgb(0, 161, 112), Font = new Font("Segoe UI Semibold", 9.5F) };
         var inspectorBody = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Color.White };
         
-        inspectorFields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2, RowCount = 9, Padding = new Padding(14, 4, 14, 10) };
+        inspectorFields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2, RowCount = 10, Padding = new Padding(14, 4, 14, 10) };
         inspectorFields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35F));
         inspectorFields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 65F));
         AddField(inspectorFields, "Tọa độ X", out txtX, 0);
@@ -335,11 +387,24 @@ partial class MainForm
         txtBindingCol.PlaceholderText = "Tên cột Excel, ví dụ: Description";
         AddField(inspectorFields, "Độ trễ (ms)", out txtDelayAfter, 6);
         AddField(inspectorFields, "Mô tả", out txtDescription, 7);
+        inspectorFields.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
+        chkUseAiForText = new CheckBox
+        {
+            Text = "Sử dụng AI sinh nội dung (yêu cầu cấu hình AI)",
+            AutoSize = true,
+            Dock = DockStyle.Fill,
+            ForeColor = Color.FromArgb(83, 111, 140),
+            Font = new Font("Segoe UI", 8.5F),
+            Cursor = Cursors.Hand,
+            Margin = new Padding(0, 4, 0, 4)
+        };
+        inspectorFields.Controls.Add(chkUseAiForText, 1, 8);
+
         inspectorFields.RowStyles.Add(new RowStyle(SizeType.Absolute, 46F));
         btnApplyConfig = CreateButton("✓ Lưu thay đổi", Color.FromArgb(0, 161, 112), 0);
         btnApplyConfig.Dock = DockStyle.Fill;
         btnApplyConfig.Margin = new Padding(0, 8, 0, 4);
-        inspectorFields.Controls.Add(btnApplyConfig, 1, 8);
+        inspectorFields.Controls.Add(btnApplyConfig, 1, 9);
 
         actionOptionsPanel = new Panel { Dock = DockStyle.Top, Height = 230, Padding = new Padding(14, 10, 14, 10), BackColor = Color.White, Visible = false };
         var actionOptionsTitle = new Label { Text = "CẤU HÌNH NHANH", Dock = DockStyle.Top, Height = 24, ForeColor = Color.FromArgb(8, 132, 191), Font = new Font("Segoe UI Semibold", 8F) };
@@ -401,6 +466,7 @@ partial class MainForm
         appOptionsPanel.Controls.Add(new Label { Text = "Ứng dụng", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.FromArgb(83, 111, 140), Font = new Font("Segoe UI", 8.5F) }, 0, 0);
         var appPackagePanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 2, 0, 2) };
         cboAppPackage = CreateComboBox(0, Color.FromArgb(244, 248, 252));
+        cboAppPackage.DropDownStyle = ComboBoxStyle.DropDown;
         cboAppPackage.Dock = DockStyle.Fill;
         btnRefreshApps = CreateButton("»", Color.FromArgb(228, 240, 249), 32);
         btnRefreshApps.Dock = DockStyle.Right;
@@ -413,10 +479,18 @@ partial class MainForm
         actionOptionsPanel.Controls.Add(appOptionsPanel);
 
         tapOptionsPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 4, 0, 0), Visible = false };
-        btnCaptureTapCoordinates = CreateButton("⌖ Lấy tọa độ từ điện thoại", Color.FromArgb(35, 149, 218), 0);
+        btnCaptureTapCoordinates = CreateButton("🎯 Lấy tọa độ từ điện thoại", Color.FromArgb(35, 149, 218), 0);
         btnCaptureTapCoordinates.Dock = DockStyle.Bottom;
         btnCaptureTapCoordinates.Height = 28;
         tapOptionsPanel.Controls.Add(btnCaptureTapCoordinates);
+        
+        swipeOptionsPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 4, 0, 0), Visible = false };
+        btnCaptureSwipeCoordinates = CreateButton("🎯 Lấy tọa độ vuốt từ điện thoại", Color.FromArgb(35, 149, 218), 0);
+        btnCaptureSwipeCoordinates.Dock = DockStyle.Bottom;
+        btnCaptureSwipeCoordinates.Height = 28;
+        swipeOptionsPanel.Controls.Add(btnCaptureSwipeCoordinates);
+        
+
         var tapGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 3, Padding = new Padding(0, 2, 0, 4) };
         tapGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35F));
         tapGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 65F));
@@ -447,6 +521,7 @@ partial class MainForm
         tapGrid.Controls.Add(tapImagePanel, 1, 2);
         tapOptionsPanel.Controls.Add(tapGrid);
         actionOptionsPanel.Controls.Add(tapOptionsPanel);
+        actionOptionsPanel.Controls.Add(swipeOptionsPanel);
         actionOptionsPanel.Controls.Add(actionOptionsTitle);
 
         var variablesPanel = new Panel { Dock = DockStyle.Bottom, Height = 250, Padding = new Padding(14, 16, 14, 16), BackColor = Color.FromArgb(250, 252, 254) };
@@ -525,13 +600,20 @@ partial class MainForm
         dgvJobs = new Guna.UI2.WinForms.Guna2DataGridView { Dock = DockStyle.Fill, AllowUserToAddRows = false, ReadOnly = true, AutoGenerateColumns = false, BackgroundColor = Color.FromArgb(14, 21, 34), BorderStyle = BorderStyle.None, GridColor = Color.FromArgb(34, 54, 72), RowHeadersVisible = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, EnableHeadersVisualStyles = false };
         dgvJobs.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle { BackColor = Color.FromArgb(22, 35, 50), ForeColor = Color.FromArgb(139, 174, 198), Font = new Font("Segoe UI Semibold", 8.5F), Padding = new Padding(5) };
         dgvJobs.DefaultCellStyle = new DataGridViewCellStyle { BackColor = Color.FromArgb(14, 21, 34), ForeColor = Color.FromArgb(204, 220, 233), SelectionBackColor = Color.FromArgb(29, 57, 73), SelectionForeColor = Color.White, Padding = new Padding(5), Font = new Font("Segoe UI", 8.5F) };
-        AddColumn("STT", "colId", 50);
-        AddColumn("Đường dẫn video", "colVideo", 320);
-        AddColumn("Tiêu đề", "colTitle", 350);
-        AddColumn("Liên kết tiếp thị", "colLink", 260);
-        AddColumn("Trạng thái", "colStatus", 110);
-        AddColumn("Trạng thái Shopee", "colShopeeStatus", 140);
-        AddColumn("Nhật ký", "colLog", 300);
+        AddColumn("STT", "colId", 50);
+
+        AddColumn("Đường dẫn video", "colVideo", 320);
+
+        AddColumn("Tiêu đề", "colTitle", 350);
+
+        AddColumn("Liên kết tiếp thị", "colLink", 260);
+
+        AddColumn("Trạng thái", "colStatus", 110);
+
+        AddColumn("Trạng thái Shopee", "colShopeeStatus", 140);
+
+        AddColumn("Nhật ký", "colLog", 300);
+
         jobsTab.Controls.Add(dgvJobs);
         jobToolbar.BringToFront();
         tabs.TabPages.Add(jobsTab);
@@ -712,8 +794,8 @@ partial class MainForm
         var button = new Button { Text = text, Width = 204, Height = 38, FlatStyle = FlatStyle.Flat, BackColor = color, ForeColor = active ? Color.White : Color.FromArgb(114, 117, 134), TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI Semibold", 9F), Padding = new Padding(13, 0, 0, 0), Cursor = Cursors.Hand, Margin = new Padding(0, 2, 0, 2) };
         button.FlatAppearance.BorderSize = 0;
         ApplyRoundedCorners(button, 7);
-        button.MouseEnter += (_, _) => { if (!active) button.BackColor = Color.FromArgb(244, 245, 248); };
-        button.MouseLeave += (_, _) => { if (!active) button.BackColor = Color.White; };
+        button.MouseEnter += (_, _) => { if (button.BackColor != primary) button.BackColor = Color.FromArgb(244, 245, 248); };
+        button.MouseLeave += (_, _) => { if (button.BackColor != primary) button.BackColor = Color.White; };
         return button;
     }
 }

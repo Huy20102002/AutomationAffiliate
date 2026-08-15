@@ -10,6 +10,7 @@ public sealed class ProductEditorDialog : Form
     private Guna.UI2.WinForms.Guna2TextBox? _title;
     private Guna.UI2.WinForms.Guna2TextBox? _affiliateLink;
     private Guna.UI2.WinForms.Guna2ComboBox? _status;
+    private Guna.UI2.WinForms.Guna2ComboBox? _fbStatus;
 
     // ── Chế độ thêm hàng loạt ──
     private DataGridView? _bulkGrid;
@@ -18,6 +19,8 @@ public sealed class ProductEditorDialog : Form
     private CheckBox? _chkUseFileName;
     private Label? _fileCountLabel;
 
+    private Guna.UI2.WinForms.Guna2ComboBox? _folderPicker;
+    private readonly IReadOnlyList<FolderItem> _folders;
     private readonly JobItem? _original;
     private readonly HashSet<string> _existingPaths;
     private readonly bool _isEditMode;
@@ -27,11 +30,12 @@ public sealed class ProductEditorDialog : Form
     public List<JobItem> BulkResults { get; } = [];
     public bool IsBulkAdd => BulkResults.Count > 0;
 
-    public ProductEditorDialog(JobItem? product = null, IEnumerable<string>? existingPaths = null)
+    public ProductEditorDialog(JobItem? product = null, IEnumerable<string>? existingPaths = null, IEnumerable<FolderItem>? folders = null)
     {
         _original = product;
         _isEditMode = product != null;
         _existingPaths = new HashSet<string>(existingPaths ?? [], StringComparer.OrdinalIgnoreCase);
+        _folders = folders?.ToList() ?? [];
 
         Text = _isEditMode ? "Sửa sản phẩm" : "Thêm sản phẩm";
         StartPosition = FormStartPosition.CenterParent;
@@ -47,12 +51,13 @@ public sealed class ProductEditorDialog : Form
             BuildBulkAddMode();
     }
 
-    public ProductEditorDialog(IReadOnlyList<JobItem> productsToEdit, IEnumerable<JobItem>? allProducts = null)
+    public ProductEditorDialog(IReadOnlyList<JobItem> productsToEdit, IEnumerable<JobItem>? allProducts = null, IEnumerable<FolderItem>? folders = null)
     {
         _original = null;
         _isEditMode = false;
         _isBulkEditMode = true;
         _existingPaths = new HashSet<string>(allProducts?.Select(j => j.VideoPath) ?? [], StringComparer.OrdinalIgnoreCase);
+        _folders = folders?.ToList() ?? [];
 
         Text = "Sửa nhiều sản phẩm";
         StartPosition = FormStartPosition.CenterParent;
@@ -70,7 +75,7 @@ public sealed class ProductEditorDialog : Form
     // ═══════════════════════════════════════════════════════
     private void BuildEditMode(JobItem product)
     {
-        ClientSize = new Size(640, 430);
+        ClientSize = new Size(640, 520);
         FormBorderStyle = FormBorderStyle.FixedDialog;
 
         var mainPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(24, 18, 24, 0) };
@@ -115,7 +120,48 @@ public sealed class ProductEditorDialog : Form
         _status.Items.AddRange(["Chưa up Shopee", "Đã up Shopee"]);
         _status.SelectedItem = product.ShopeeStatus;
 
-        mainPanel.Controls.AddRange([lblVideo, _videoPath, btnBrowse, lblTitle, _title, hashPanel, lblLink, _affiliateLink, lblStatus, _status]);
+
+        // Folder
+        var lblFolder = CreateLabel("Chiến dịch", 0, 218);
+        _folderPicker = new Guna.UI2.WinForms.Guna2ComboBox
+        {
+            FillColor = Color.White, BorderRadius = 7, BorderThickness = 1,
+            BorderColor = Color.FromArgb(190, 198, 211),
+            FocusedState = { BorderColor = Color.FromArgb(96, 82, 218) },
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            DisplayMember = "Name", ValueMember = "Id"
+        };
+        _folderPicker.SetBounds(110, 234, 460, 32);
+        _folderPicker.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        _folderPicker.Items.Add(new FolderItem { Id = 0, Name = "[Chưa phân loại]" });
+        foreach (var f in _folders) _folderPicker.Items.Add(f);
+        
+        var currentFolderId = product.FolderId ?? 0;
+        foreach (var item in _folderPicker.Items)
+        {
+            if (item is FolderItem fi && fi.Id == currentFolderId)
+            {
+                _folderPicker.SelectedItem = item;
+                break;
+            }
+        }
+
+        // Fb Status
+        var lblFbStatus = CreateLabel("Trạng thái FB", 0, 262);
+        _fbStatus = new Guna.UI2.WinForms.Guna2ComboBox
+        {
+            FillColor = Color.White, BorderRadius = 7, BorderThickness = 1,
+            BorderColor = Color.FromArgb(190, 198, 211),
+            FocusedState = { BorderColor = Color.FromArgb(96, 82, 218) },
+            DropDownStyle = ComboBoxStyle.DropDownList
+        };
+        _fbStatus.SetBounds(110, 278, 460, 32);
+        _fbStatus.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        _fbStatus.Items.AddRange(["Chưa up Facebook", "Đã up Facebook"]);
+        _fbStatus.SelectedItem = product.FbStatus;
+
+        mainPanel.Controls.AddRange([lblVideo, _videoPath, btnBrowse, lblTitle, _title, hashPanel, lblLink, _affiliateLink, lblStatus, _status, lblFolder, _folderPicker, lblFbStatus, _fbStatus]);
+
 
         // Buttons
         var buttons = CreateButtonPanel("Lưu", 92);
@@ -174,6 +220,24 @@ public sealed class ProductEditorDialog : Form
         btnAdd.Visible = !_isBulkEditMode;
         btnRemove.Visible = !_isBulkEditMode;
         _chkUseFileName.Visible = !_isBulkEditMode;
+        var lblFolderBulk = new Label
+        {
+            Text = "Gán chiến dịch:", AutoSize = true,
+            ForeColor = Color.FromArgb(90, 95, 115),
+            Margin = new Padding(18, 8, 6, 0)
+        };
+        _folderPicker = new Guna.UI2.WinForms.Guna2ComboBox
+        {
+            Width = 200, Height = 28, DropDownStyle = ComboBoxStyle.DropDownList,
+            DisplayMember = "Name", ValueMember = "Id",
+            Margin = new Padding(0, 1, 0, 0)
+        };
+        _folderPicker.Items.Add(new FolderItem { Id = 0, Name = "[Chưa phân loại]" });
+        foreach (var f in _folders) _folderPicker.Items.Add(f);
+        _folderPicker.SelectedIndex = 0;
+        
+        toolbar.Controls.AddRange([lblFolderBulk, _folderPicker]);
+
         if (_isBulkEditMode)
         {
             _bulkSuggestionsToggle = new CheckBox
@@ -540,14 +604,19 @@ public sealed class ProductEditorDialog : Form
             if (_existingPaths.Contains(videoPath) && !string.Equals(_original?.VideoPath, videoPath, StringComparison.OrdinalIgnoreCase))
             { ShowWarn("Đường dẫn video này đã tồn tại."); return; }
 
+            int? folderId = null;
+            if (_folderPicker?.SelectedItem is FolderItem fi && fi.Id > 0) folderId = fi.Id;
+            
             Result = new JobItem
             {
                 Id = _original?.Id ?? 0,
+                FolderId = folderId,
                 VideoPath = videoPath,
                 Title = (_title?.Text ?? "").Trim(),
                 ShopeeAffLink = (_affiliateLink?.Text ?? "").Trim(),
                 Status = _original?.Status ?? "Chờ",
                 ShopeeStatus = _status?.SelectedItem?.ToString() ?? "Chưa up Shopee",
+                FbStatus = _fbStatus?.SelectedItem?.ToString() ?? "Chưa up Facebook",
                 Log = _original?.Log ?? string.Empty
             };
         }
@@ -562,13 +631,18 @@ public sealed class ProductEditorDialog : Form
                 var title = row.Cells["colTitle"].Value?.ToString() ?? "";
                 var link = row.Cells["colLink"].Value?.ToString() ?? "";
 
+                int? bulkFolderId = null;
+                if (_folderPicker?.SelectedItem is FolderItem bfi && bfi.Id > 0) bulkFolderId = bfi.Id;
+                
                 BulkResults.Add(new JobItem
                 {
+                    FolderId = bulkFolderId,
                     VideoPath = file,
                     Title = title,
                     ShopeeAffLink = link,
                     Status = "Chờ",
-                    ShopeeStatus = "Chưa up Shopee"
+                    ShopeeStatus = "Chưa up Shopee",
+                    FbStatus = "Chưa up Facebook"
                 });
             }
 

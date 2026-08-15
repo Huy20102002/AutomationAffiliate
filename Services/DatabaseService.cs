@@ -24,16 +24,37 @@ public class DatabaseService
         var createJobsTable = @"
             CREATE TABLE IF NOT EXISTS Jobs (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                FolderId INTEGER,
                 VideoPath TEXT,
                 ShopeeAffLink TEXT,
                 Title TEXT,
                 Status TEXT,
                 ShopeeStatus TEXT,
+                FbStatus TEXT,
                 Log TEXT,
                 DataJson TEXT
             );";
             
         connection.Execute(createJobsTable);
+        
+        var createFoldersTable = @"
+            CREATE TABLE IF NOT EXISTS Folders (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Name TEXT
+            );";
+        connection.Execute(createFoldersTable);
+        
+        try
+        {
+            connection.Execute("ALTER TABLE Jobs ADD COLUMN FbStatus TEXT DEFAULT 'Chưa up Facebook';");
+        }
+        catch { /* Bỏ qua nếu cột đã tồn tại */ }
+        
+        try
+        {
+            connection.Execute("ALTER TABLE Jobs ADD COLUMN FolderId INTEGER;");
+        }
+        catch { /* Bỏ qua nếu cột đã tồn tại */ }
     }
 
     public List<JobItem> GetAllJobs()
@@ -47,8 +68,8 @@ public class DatabaseService
     {
         using var connection = CreateConnection();
         var sql = @"
-            INSERT INTO Jobs (VideoPath, ShopeeAffLink, Title, Status, ShopeeStatus, Log, DataJson)
-            VALUES (@VideoPath, @ShopeeAffLink, @Title, @Status, @ShopeeStatus, @Log, @DataJson);
+            INSERT INTO Jobs (FolderId, VideoPath, ShopeeAffLink, Title, Status, ShopeeStatus, FbStatus, Log, DataJson)
+            VALUES (@FolderId, @VideoPath, @ShopeeAffLink, @Title, @Status, @ShopeeStatus, @FbStatus, @Log, @DataJson);
             SELECT last_insert_rowid();";
             
         job.Id = connection.QuerySingle<int>(sql, job);
@@ -59,11 +80,13 @@ public class DatabaseService
         using var connection = CreateConnection();
         var sql = @"
             UPDATE Jobs 
-            SET VideoPath = @VideoPath, 
+            SET FolderId = @FolderId,
+                VideoPath = @VideoPath, 
                 ShopeeAffLink = @ShopeeAffLink, 
                 Title = @Title, 
                 Status = @Status, 
                 ShopeeStatus = @ShopeeStatus, 
+                FbStatus = @FbStatus, 
                 Log = @Log, 
                 DataJson = @DataJson
             WHERE Id = @Id";
@@ -93,8 +116,8 @@ public class DatabaseService
             connection.Execute("DELETE FROM Jobs", transaction: transaction);
             
             var sql = @"
-                INSERT INTO Jobs (Id, VideoPath, ShopeeAffLink, Title, Status, ShopeeStatus, Log, DataJson)
-                VALUES (@Id, @VideoPath, @ShopeeAffLink, @Title, @Status, @ShopeeStatus, @Log, @DataJson);";
+                INSERT INTO Jobs (Id, FolderId, VideoPath, ShopeeAffLink, Title, Status, ShopeeStatus, FbStatus, Log, DataJson)
+                VALUES (@Id, @FolderId, @VideoPath, @ShopeeAffLink, @Title, @Status, @ShopeeStatus, @FbStatus, @Log, @DataJson);";
             
             connection.Execute(sql, jobs, transaction: transaction);
             transaction.Commit();
@@ -104,5 +127,33 @@ public class DatabaseService
             transaction.Rollback();
             throw;
         }
+    }
+
+    public List<FolderItem> GetAllFolders()
+    {
+        using var connection = CreateConnection();
+        return connection.Query<FolderItem>("SELECT * FROM Folders ORDER BY Name").ToList();
+    }
+
+    public void SaveFolder(FolderItem folder)
+    {
+        using var connection = CreateConnection();
+        var sql = @"
+            INSERT INTO Folders (Name) VALUES (@Name);
+            SELECT last_insert_rowid();";
+        folder.Id = connection.QuerySingle<int>(sql, folder);
+    }
+
+    public void UpdateFolder(FolderItem folder)
+    {
+        using var connection = CreateConnection();
+        connection.Execute("UPDATE Folders SET Name = @Name WHERE Id = @Id", folder);
+    }
+
+    public void DeleteFolder(int id)
+    {
+        using var connection = CreateConnection();
+        connection.Execute("DELETE FROM Folders WHERE Id = @Id", new { Id = id });
+        connection.Execute("UPDATE Jobs SET FolderId = NULL WHERE FolderId = @Id", new { Id = id });
     }
 }

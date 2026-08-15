@@ -15,6 +15,7 @@ namespace ShopeeVideoUploader;
 /// <summary>Shell chính của FlowPilot: thiết bị, workflow canvas, job queue và log.</summary>
 public partial class MainForm : Form
 {
+    private bool _isUpdatingFolders;
     private readonly AdbManager _adb = new();
     private readonly AdbActionRecorder _actionRecorder;
     private readonly ScrcpyMouseCapture _scrcpyMouseCapture = new();
@@ -26,6 +27,8 @@ public partial class MainForm : Form
     private IosManager _iosManager = new();
     private IosWorkflowEngine? _iosEngine;
     private readonly List<WorkflowVariable> _variables = [];
+    private string _workflowsDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FlowPilot", "Workflows");
+    private string _currentWorkflowFile = "Shopee_Upload.json";
     private List<JobItem> _jobs = [];
     private CancellationTokenSource? _cts;
     private readonly Services.DatabaseService _dbService;
@@ -36,6 +39,9 @@ public partial class MainForm : Form
     private List<DeviceInfo> _deviceList = [];
     private System.Windows.Forms.Timer? _fadeTimer;
     private double _fadeValue;
+    private Button? _navTikTok;
+    private TikTokDownloaderControl? _tikTokDownloaderControl;
+    private Control? _activeView;
 
     private sealed record VideoSourceChoice(VideoSourceMode Mode)
     {
@@ -50,10 +56,11 @@ public partial class MainForm : Form
 
     public MainForm()
     {
-        _dbService = new Services.DatabaseService();
+        _dbService = new Services.DatabaseService(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.db"));
         try { _dbService.InitializeDatabase(); } catch (Exception ex) { Logger.Error("Lỗi khởi tạo DB", ex); }
         _actionRecorder = new AdbActionRecorder(_adb);
         InitializeComponent();
+        InitializeTikTokDownloader();
         ApplyLightTheme();
         LayoutRoot();
         Resize += (_, _) => LayoutRoot();
@@ -70,7 +77,7 @@ public partial class MainForm : Form
 
     private void LayoutRoot()
     {
-        const int sidebarWidth = 238;
+        const int sidebarWidth = 224;
         var topInset = Math.Max(0, Padding.Top);
         var bottomInset = Math.Max(0, Padding.Bottom);
         var contentHeight = Math.Max(0, ClientSize.Height - topInset - bottomInset);
@@ -90,6 +97,15 @@ public partial class MainForm : Form
         btnRefreshDevices.Click += async (_, _) => await RefreshDevicesAsync();
         btnConnect.Click += async (_, _) => await ConnectDeviceAsync();
         btnDisconnect.Click += (_, _) => DisconnectDevice();
+        cboMainFolderSelect.SelectedIndexChanged += (_, _) => 
+        {
+            if (_isUpdatingFolders) return;
+            if (cboMainFolderSelect.SelectedItem is ShopeeVideoUploader.Models.FolderItem folder)
+            {
+                productListControl.FilterByFolder(folder.Id);
+                FilterJobsGrid();
+            }
+        };
         btnAddStep.Click += (_, _) => AddStep();
         btnRemoveStep.Click += (_, _) => RemoveStep();
         btnMoveUp.Click += (_, _) => MoveStep(-1);
@@ -134,11 +150,20 @@ public partial class MainForm : Form
         btnRefreshApps.Click += async (_, _) => await RefreshInstalledAppsAsync();
         btnCaptureCurrentApp.Click += async (_, _) => await CaptureCurrentAppAsync();
         btnCaptureTapCoordinates.Click += async (_, _) => await CaptureTapCoordinatesAsync();
+        btnCaptureSwipeCoordinates.Click += async (_, _) => await CaptureSwipeCoordinatesAsync();
         cboTapMode.SelectedIndexChanged += (_, _) => UpdateTapModeFields();
         cboVideoSource.SelectedIndexChanged += (_, _) => UpdateVideoSourceHint();
+        cboWorkflowProfiles.SelectedIndexChanged += (_, _) => SwitchWorkflowProfile();
+        btnAddWorkflowProfile.Click += (_, _) => CreateNewWorkflowProfile();
+        btnManualSaveProfile.Click += (_, _) => { SaveAutoSavedWorkflow(); SetStatus($"Đã lưu vào {_currentWorkflowFile}"); };
+        btnExportProfile.Click += (_, _) => SaveWorkflow();
+        btnDeleteWorkflowProfile.Click += (_, _) => DeleteWorkflowProfile();
+        btnRenameWorkflowProfile.Click += (_, _) => RenameWorkflowProfile();
         navWorkflow.Click += (_, _) => ShowWorkflowView();
         navWorkflowIos.Click += (_, _) => ShowIosWorkflowView();
         navProducts.Click += (_, _) => ShowProductView();
+        if (_navTikTok != null) _navTikTok.Click += (_, _) => ShowTikTokDownloaderView();
+        productListControl.FolderCrudRequested += (_, _) => ShowFolderManager();
         productListControl.ImportRequested += (_, _) => ImportExcel();
         productListControl.AddRequested += (_, _) => AddProduct();
         productListControl.EditRequested += (_, _) => EditProduct();
@@ -270,6 +295,22 @@ public partial class MainForm : Form
         panelInspector.BackColor = card;
         panelBottom.BackColor = card;
         panelStatusBar.BackColor = card;
+        sidebar.Width = 224;
+        sidebar.Paint += (_, e) =>
+        {
+            using var pen = new Pen(Color.FromArgb(232, 234, 240));
+            e.Graphics.DrawLine(pen, sidebar.ClientSize.Width - 1, 0, sidebar.ClientSize.Width - 1, sidebar.ClientSize.Height);
+        };
+        topBar.Paint += (_, e) =>
+        {
+            using var pen = new Pen(Color.FromArgb(232, 234, 240));
+            e.Graphics.DrawLine(pen, 0, topBar.ClientSize.Height - 1, topBar.ClientSize.Width, topBar.ClientSize.Height - 1);
+        };
+        panelStatusBar.Paint += (_, e) =>
+        {
+            using var pen = new Pen(Color.FromArgb(232, 234, 240));
+            e.Graphics.DrawLine(pen, 0, 0, panelStatusBar.ClientSize.Width, 0);
+        };
         lblStatus.ForeColor = muted;
         lblDeviceBadge.ForeColor = Color.FromArgb(220, 151, 38);
 
@@ -278,7 +319,7 @@ public partial class MainForm : Form
         if (btnConnect is Guna.UI2.WinForms.Guna2Button connectBtn) connectBtn.FillColor = primary;
         if (btnTestWorkflow is Guna.UI2.WinForms.Guna2Button testBtn) testBtn.FillColor = Color.FromArgb(64, 169, 255);
         if (btnStop is Guna.UI2.WinForms.Guna2Button stopBtn) stopBtn.FillColor = danger;
-        if (btnDisconnect is Guna.UI2.WinForms.Guna2Button disconBtn) disconBtn.FillColor = Color.FromArgb(238, 225, 228);
+        if (btnDisconnect is Guna.UI2.WinForms.Guna2Button disconBtn) { disconBtn.FillColor = Color.FromArgb(235, 237, 242); disconBtn.ForeColor = Color.FromArgb(70, 70, 85); }
 
         btnStart.Text = "▶  CHẠY QUY TRÌNH";
         btnStop.Text = "■  DỪNG";
@@ -286,8 +327,8 @@ public partial class MainForm : Form
         btnDisconnect.Text = "Ngắt kết nối";
         btnAddStep.Text = "＋ Thêm bước";
         btnRemoveStep.Text = "Xóa";
-        btnSaveWorkflow.Text = "Lưu";
-        btnLoadWorkflow.Text = "Mở";
+        btnSaveWorkflow.Text = "Xuất";
+        btnLoadWorkflow.Text = "Nhập";
         btnClearWorkflow.Text = "Làm sạch";
         btnApplyConfig.Text = "Áp dụng";
         btnRecordActions.Text = "● Ghi thao tác";
@@ -299,6 +340,7 @@ public partial class MainForm : Form
                 panel.BackColor = card;
         }
         panelStatusBar.BackColor = card;
+        topBar.BackColor = card;
 
         // Sidebar nav buttons — GemLogin style: active = gradient purple pill, others = transparent + dark text
         foreach (var button in GetAllControls(sidebar).OfType<Guna.UI2.WinForms.Guna2Button>())
@@ -318,7 +360,7 @@ public partial class MainForm : Form
                 label.BackColor = Color.Transparent;
                 if (label.Font.Size >= 14F)
                     label.ForeColor = Color.FromArgb(96, 82, 218); // brand purple
-                else if (label.Text.StartsWith("SHOPEE") || label.Text.StartsWith("BỘ MÁY") || label.Text.StartsWith("QUY TRÌNH ADB"))
+                else if (label.Text.StartsWith("MULTI-PLATFORM") || label.Text.StartsWith("BỘ MÁY") || label.Text.StartsWith("QUY TRÌNH ADB"))
                     label.ForeColor = Color.FromArgb(160, 165, 180);
                 else if (label.Text.StartsWith("KHÔNG GIAN") || label.Text.StartsWith("SẢN PHẨM") || label.Text.StartsWith("GIAO DỊCH") || label.Text.StartsWith("HỖ TRỢ"))
                     label.ForeColor = Color.FromArgb(140, 145, 165);
@@ -372,6 +414,13 @@ public partial class MainForm : Form
         cboStepType.BackColor = card;
         cboStepType.FillColor = card;
         workflowCanvas.ApplyTheme(true);
+
+        foreach (var panel in new[] { panelWorkflowContainer, panelInspector })
+        {
+            panel.BorderRadius = 6;
+            panel.BorderThickness = 1;
+            panel.BorderColor = Color.FromArgb(232, 234, 240);
+        }
 
         dgvJobs.GridColor = Color.FromArgb(235, 237, 242); dgvJobs.ThemeStyle.HeaderStyle.BackColor = Color.FromArgb(244, 245, 248); dgvJobs.ThemeStyle.HeaderStyle.ForeColor = primary; dgvJobs.ThemeStyle.RowsStyle.BackColor = Color.White; dgvJobs.ThemeStyle.RowsStyle.ForeColor = ink; dgvJobs.ThemeStyle.RowsStyle.SelectionBackColor = Color.FromArgb(215, 239, 251); dgvJobs.ThemeStyle.RowsStyle.SelectionForeColor = ink;
         dgvJobs.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(244, 245, 248);
@@ -796,14 +845,16 @@ public partial class MainForm : Form
         txtBindingCol.PlaceholderText = step.Type == StepType.InputText
             ? "Không bắt buộc nếu đã ghi tên cột ở ô trên"
             : "Tên cột dữ liệu (nếu có)";
-        txtDelayAfter.Text = step.DelayAfterMs.ToString();
+        txtDelayAfter.Text = step.DelayMaxMs.HasValue ? $"{step.DelayAfterMs},{step.DelayMaxMs.Value}" : step.DelayAfterMs.ToString();
         txtDescription.Text = step.Description;
+        chkUseAiForText.Checked = step.UseAiForText;
         UpdateInspectorFieldLayout(step.Type);
         txtTextValue.Enabled = !(step.Type is StepType.OpenApp or StepType.PushVideo);
-        actionOptionsPanel.Visible = step.Type is StepType.OpenApp or StepType.PushVideo or StepType.Tap;
+        actionOptionsPanel.Visible = step.Type is StepType.OpenApp or StepType.PushVideo or StepType.Tap or StepType.Swipe;
         videoOptionsPanel.Visible = step.Type == StepType.PushVideo;
         appOptionsPanel.Visible = step.Type == StepType.OpenApp;
         tapOptionsPanel.Visible = step.Type == StepType.Tap;
+        swipeOptionsPanel.Visible = step.Type == StepType.Swipe;
         UpdateTapModeFields();
 
         if (step.Type == StepType.PushVideo)
@@ -825,7 +876,7 @@ public partial class MainForm : Form
         {
             if (!string.IsNullOrWhiteSpace(step.TextValue) && !cboAppPackage.Items.Contains(step.TextValue))
                 cboAppPackage.Items.Add(step.TextValue);
-            cboAppPackage.SelectedItem = step.TextValue;
+            cboAppPackage.Text = step.TextValue;
             _ = RefreshInstalledAppsAsync(step.TextValue);
         }
     }
@@ -843,12 +894,27 @@ public partial class MainForm : Form
         step.TapImagePath = txtTapImagePath.Text.Trim();
         if (int.TryParse(txtX2.Text, out var x2)) step.X2 = x2;
         if (int.TryParse(txtY2.Text, out var y2)) step.Y2 = y2;
-        if (int.TryParse(txtDelayAfter.Text, out var delay)) step.DelayAfterMs = Math.Max(0, delay);
+        var delayText = txtDelayAfter.Text.Trim();
+        if (delayText.Contains(",")) {
+            var parts = delayText.Split(',');
+            if (parts.Length == 2 && int.TryParse(parts[0], out var min) && int.TryParse(parts[1], out var max)) {
+                step.DelayAfterMs = Math.Max(0, min);
+                step.DelayMaxMs = Math.Max(0, max);
+            }
+        } else {
+            if (int.TryParse(delayText, out var delay)) step.DelayAfterMs = Math.Max(0, delay);
+            step.DelayMaxMs = null;
+        }
         step.TextValue = txtTextValue.Text;
         step.BindingColumn = txtBindingCol.Text;
         step.Description = txtDescription.Text;
-        if (step.Type == StepType.OpenApp && cboAppPackage.SelectedItem is string packageName)
-            step.TextValue = packageName;
+        step.UseAiForText = chkUseAiForText.Checked;
+        if (step.Type == StepType.OpenApp)
+        {
+            var packageName = cboAppPackage.Text?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(packageName))
+                step.TextValue = packageName;
+        }
         if (step.Type == StepType.PushVideo && cboVideoSource.SelectedItem is VideoSourceChoice source)
         {
             step.VideoSource = source.Mode;
@@ -895,7 +961,7 @@ public partial class MainForm : Form
         {
             StepType.Tap => new[] { 0, 1, 6, 7 },
             StepType.Swipe => new[] { 0, 1, 2, 3, 6, 7 },
-            StepType.InputText => new[] { 4, 5, 6, 7 },
+            StepType.InputText => new[] { 4, 5, 6, 7, 8 },
             StepType.PushVideo => new[] { 6, 7 },
             StepType.Delay => new[] { 6, 7 },
             StepType.OpenApp => new[] { 6, 7 },
@@ -903,10 +969,10 @@ public partial class MainForm : Form
             StepType.MediaScan => new[] { 4, 6, 7 },
             StepType.AdbShell => new[] { 4, 6, 7 },
             StepType.Start or StepType.End => new[] { 7 },
-            _ => Enumerable.Range(0, 8).ToArray()
+            _ => Enumerable.Range(0, 9).ToArray()
         };
 
-        for (var row = 0; row < 8; row++)
+        for (var row = 0; row < 9; row++)
         {
             var show = visibleRows.Contains(row);
             inspectorFields.RowStyles[row].SizeType = SizeType.Absolute;
@@ -916,8 +982,8 @@ public partial class MainForm : Form
             if (left != null) left.Visible = show;
             if (right != null) right.Visible = show;
         }
-        inspectorFields.RowStyles[8].SizeType = SizeType.Absolute;
-        inspectorFields.RowStyles[8].Height = 40F;
+        inspectorFields.RowStyles[9].SizeType = SizeType.Absolute;
+        inspectorFields.RowStyles[9].Height = 40F;
         btnApplyConfig.Visible = true;
         inspectorFields.PerformLayout();
     }
@@ -1051,7 +1117,61 @@ public partial class MainForm : Form
                 _coordinateCaptureCts = null;
             }
             btnCaptureTapCoordinates.Enabled = true;
-            btnCaptureTapCoordinates.Text = "Lấy tọa độ trên điện thoại";
+            btnCaptureTapCoordinates.Text = "🎯 Lấy tọa độ từ điện thoại";
+        }
+    }
+
+    private async Task CaptureSwipeCoordinatesAsync()
+    {
+        if (_currentDevice == null)
+        {
+            ShowError("Chưa kết nối điện thoại! Hãy chọn một thiết bị ở tab Danh sách thiết bị.");
+            return;
+        }
+
+        _coordinateCaptureCts?.Cancel();
+        _coordinateCaptureCts = new CancellationTokenSource();
+        btnCaptureSwipeCoordinates.Enabled = false;
+        btnCaptureSwipeCoordinates.Text = "Hãy vuốt trên điện thoại...";
+        SetStatus("Đang chờ một lần vuốt trên scrcpy...");
+
+        try
+        {
+            var width = int.TryParse(_variables.FirstOrDefault(v => v.Name == "ScreenWidth")?.Value, out var parsedWidth) ? parsedWidth : 0;
+            var height = int.TryParse(_variables.FirstOrDefault(v => v.Name == "ScreenHeight")?.Value, out var parsedHeight) ? parsedHeight : 0;
+            var captured = await _scrcpyMouseCapture.CaptureNextSwipeAsync(
+                _currentDevice.Model ?? _currentDevice.Serial,
+                width,
+                height,
+                _coordinateCaptureCts.Token);
+            if (captured == null) return;
+
+            txtX.Text = captured.StartX.ToString();
+            txtY.Text = captured.StartY.ToString();
+            txtX2.Text = captured.EndX.ToString();
+            txtY2.Text = captured.EndY.ToString();
+            txtDescription.Text = $"Vuốt ({captured.StartX}, {captured.StartY}) → ({captured.EndX}, {captured.EndY})";
+            ApplyStepConfig();
+            SetStatus($"Đã lấy tọa độ vuốt: ({captured.StartX}, {captured.StartY}) → ({captured.EndX}, {captured.EndY})");
+        }
+        catch (OperationCanceledException)
+        {
+            SetStatus("Đã hủy lấy tọa độ");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Lỗi lấy tọa độ vuốt", ex);
+            ShowError($"Không lấy được tọa độ: {ex.Message}");
+        }
+        finally
+        {
+            if (_coordinateCaptureCts != null)
+            {
+                _coordinateCaptureCts.Dispose();
+                _coordinateCaptureCts = null;
+            }
+            btnCaptureSwipeCoordinates.Enabled = true;
+            btnCaptureSwipeCoordinates.Text = "🎯 Lấy tọa độ vuốt từ điện thoại";
         }
     }
 
@@ -1108,55 +1228,23 @@ public partial class MainForm : Form
         };
     }
 
-    private static string AndroidAutoSavePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "FlowPilot",
-        "workflow-autosave.json");
-
-    private static string IosAutoSavePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "FlowPilot",
-        "ios-workflow-autosave.json");
+    private string CurrentWorkflowPath => Path.Combine(_workflowsDirectory, _currentWorkflowFile);
 
     private void LoadAutoSavedWorkflow()
     {
-        if (File.Exists(AndroidAutoSavePath))
-        {
-            try
-            {
-                var document = WorkflowEngine.LoadWorkflowDocument(AndroidAutoSavePath);
-                _androidSteps.Clear();
-                _androidSteps.AddRange(document.Steps);
-                _variables.RemoveAll(variable => !variable.IsBuiltIn);
-                _variables.AddRange(document.Variables.Where(variable => !variable.IsBuiltIn));
-                RefreshVariableList();
-                RefreshWorkflow();
+        if (!Directory.Exists(_workflowsDirectory))
+            Directory.CreateDirectory(_workflowsDirectory);
 
-                var selectedIndex = _androidSteps.Count > 0 ? 0 : -1;
-                workflowCanvas.SelectStep(selectedIndex);
-                LoadStepConfig(selectedIndex);
-                Logger.Info("Đã khôi phục workflow Android tự động.");
-            }
-            catch (Exception ex)
-            {
-                Logger.Warn($"Không thể khôi phục workflow Android: {ex.Message}");
-            }
-        }
-        
-        if (File.Exists(IosAutoSavePath))
+        var files = Directory.GetFiles(_workflowsDirectory, "*.json");
+        if (files.Length == 0)
         {
-            try
-            {
-                var document = WorkflowEngine.LoadWorkflowDocument(IosAutoSavePath);
-                _iosSteps.Clear();
-                _iosSteps.AddRange(document.Steps);
-                Logger.Info("Đã khôi phục workflow iOS tự động.");
-            }
-            catch (Exception ex)
-            {
-                Logger.Warn($"Không thể khôi phục workflow iOS: {ex.Message}");
-            }
+            _currentWorkflowFile = "Shopee_Upload.json";
+            WorkflowEngine.SaveWorkflow(_androidSteps, _variables, _jobs, CurrentWorkflowPath);
         }
+
+        RefreshWorkflowProfilesList();
+        _currentWorkflowFile = "";
+        SwitchWorkflowProfile();
         
         try 
         {
@@ -1169,6 +1257,114 @@ public partial class MainForm : Form
         {
             Logger.Error($"Không thể tải dữ liệu từ CSDL: {ex.Message}", ex);
         }
+    }
+
+    private void RefreshWorkflowProfilesList(string selectFile = "")
+    {
+        cboWorkflowProfiles.Items.Clear();
+        if (Directory.Exists(_workflowsDirectory))
+        {
+            var files = Directory.GetFiles(_workflowsDirectory, "*.json").Select(Path.GetFileName).ToArray();
+            cboWorkflowProfiles.Items.AddRange(files);
+            
+            if (!string.IsNullOrEmpty(selectFile) && cboWorkflowProfiles.Items.Contains(selectFile))
+                cboWorkflowProfiles.SelectedItem = selectFile;
+            else if (files.Contains(_currentWorkflowFile))
+                cboWorkflowProfiles.SelectedItem = _currentWorkflowFile;
+            else if (files.Length > 0)
+                cboWorkflowProfiles.SelectedIndex = 0;
+        }
+    }
+
+    private void SwitchWorkflowProfile()
+    {
+        if (cboWorkflowProfiles.SelectedItem is not string selectedFile) return;
+        if (selectedFile == _currentWorkflowFile) return;
+        
+        SaveAutoSavedWorkflow();
+        _currentWorkflowFile = selectedFile;
+        
+        if (File.Exists(CurrentWorkflowPath))
+        {
+            try
+            {
+                var document = WorkflowEngine.LoadWorkflowDocument(CurrentWorkflowPath);
+                _androidSteps.Clear();
+                _androidSteps.AddRange(document.Steps);
+                _variables.RemoveAll(variable => !variable.IsBuiltIn);
+                _variables.AddRange(document.Variables.Where(variable => !variable.IsBuiltIn));
+                RefreshVariableList();
+                RefreshWorkflow();
+
+                var selectedIndex = _androidSteps.Count > 0 ? 0 : -1;
+                workflowCanvas.SelectStep(selectedIndex);
+                LoadStepConfig(selectedIndex);
+                Logger.Info($"Đã load quy trình: {_currentWorkflowFile}");
+                SetStatus($"Đang dùng quy trình: {_currentWorkflowFile}");
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn($"Không thể load quy trình: {ex.Message}");
+            }
+        }
+    }
+
+    private void CreateNewWorkflowProfile()
+    {
+        var newName = Microsoft.VisualBasic.Interaction.InputBox("Nhập tên quy trình mới:", "Tạo Quy Trình Mới", "Facebook_Upload");
+        if (string.IsNullOrWhiteSpace(newName)) return;
+        if (!newName.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) newName += ".json";
+        
+        var path = Path.Combine(_workflowsDirectory, newName);
+        if (File.Exists(path))
+        {
+            ShowError("Tên quy trình này đã tồn tại!");
+            return;
+        }
+
+        _androidSteps.Clear();
+        WorkflowEngine.SaveWorkflow(_androidSteps, _variables, _jobs, path);
+        RefreshWorkflowProfilesList(newName);
+    }
+
+    private void DeleteWorkflowProfile()
+    {
+        if (cboWorkflowProfiles.Items.Count <= 1)
+        {
+            ShowError("Không thể xóa quy trình cuối cùng!");
+            return;
+        }
+
+        if (MessageBox.Show($"Bạn có chắc chắn muốn xóa quy trình '{_currentWorkflowFile}' không?", "Xác nhận xóa", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+        {
+            if (File.Exists(CurrentWorkflowPath))
+                File.Delete(CurrentWorkflowPath);
+            
+            _currentWorkflowFile = "";
+            RefreshWorkflowProfilesList();
+        }
+    }
+
+    private void RenameWorkflowProfile()
+    {
+        var newName = Microsoft.VisualBasic.Interaction.InputBox("Nhập tên mới cho quy trình:", "Đổi Tên Quy Trình", _currentWorkflowFile.Replace(".json", ""));
+        if (string.IsNullOrWhiteSpace(newName)) return;
+        if (!newName.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) newName += ".json";
+        
+        var oldPath = CurrentWorkflowPath;
+        var newPath = Path.Combine(_workflowsDirectory, newName);
+        
+        if (oldPath.Equals(newPath, StringComparison.OrdinalIgnoreCase)) return;
+        
+        if (File.Exists(newPath))
+        {
+            ShowError("Tên quy trình này đã tồn tại!");
+            return;
+        }
+
+        File.Move(oldPath, newPath);
+        _currentWorkflowFile = newName;
+        RefreshWorkflowProfilesList(newName);
     }
 
     private void BackupDatabase()
@@ -1217,24 +1413,16 @@ public partial class MainForm : Form
 
     private void SaveAutoSavedWorkflow()
     {
-        var directory = Path.GetDirectoryName(AndroidAutoSavePath);
-        if (string.IsNullOrWhiteSpace(directory)) return;
+        if (string.IsNullOrWhiteSpace(_workflowsDirectory)) return;
 
         try
         {
-            Directory.CreateDirectory(directory);
+            Directory.CreateDirectory(_workflowsDirectory);
+            var temp = CurrentWorkflowPath + ".tmp";
+            WorkflowEngine.SaveWorkflow(_androidSteps, _variables, _jobs, temp);
+            File.Move(temp, CurrentWorkflowPath, true);
             
-            // Save Android
-            var androidTemp = AndroidAutoSavePath + ".tmp";
-            WorkflowEngine.SaveWorkflow(_androidSteps, _variables, _jobs, androidTemp);
-            File.Move(androidTemp, AndroidAutoSavePath, true);
-            
-            // Save iOS
-            var iosTemp = IosAutoSavePath + ".tmp";
-            WorkflowEngine.SaveWorkflow(_iosSteps, _variables, _jobs, iosTemp);
-            File.Move(iosTemp, IosAutoSavePath, true);
-            
-            Logger.Info($"Đã tự lưu workflow (Android & iOS) và {_jobs.Count} sản phẩm.");
+            Logger.Info($"Đã tự lưu workflow {_currentWorkflowFile} và {_jobs.Count} sản phẩm.");
         }
         catch (Exception ex)
         {
@@ -1258,6 +1446,7 @@ public partial class MainForm : Form
             workflowCanvas.SelectStep(_workflowSteps.Count > 0 ? 0 : -1);
             LoadStepConfig(_workflowSteps.Count > 0 ? 0 : -1);
             SetStatus("Đã load workflow");
+            SaveAutoSavedWorkflow();
         }
         catch (Exception ex) { ShowError($"Lỗi load workflow: {ex.Message}"); }
     }
@@ -1306,33 +1495,76 @@ public partial class MainForm : Form
         catch (Exception ex) { ShowError($"Lỗi xuất kết quả: {ex.Message}"); }
     }
 
-    private void RefreshJobGrid()
+
+    private void FilterJobsGrid()
     {
+        var selectedFolderId = -1;
+        if (cboMainFolderSelect != null && cboMainFolderSelect.SelectedItem is ShopeeVideoUploader.Models.FolderItem fi)
+        {
+            selectedFolderId = fi.Id;
+        }
+
         dgvJobs.Rows.Clear();
         foreach (var job in _jobs)
         {
+            if (selectedFolderId != -1 && selectedFolderId != -2 && (job.FolderId ?? 0) != selectedFolderId) continue;
             var row = dgvJobs.Rows.Add(job.Id, job.VideoPath, job.Title, job.ShopeeAffLink, job.Status, job.ShopeeStatus, job.Log);
             StyleStatusCell(dgvJobs.Rows[row].Cells["colStatus"], job.Status);
             StyleShopeeStatusCell(dgvJobs.Rows[row].Cells["colShopeeStatus"], job.ShopeeStatus);
         }
-        productListControl.SetProducts(_jobs);
     }
 
-    private void UpdateJobRow(int index, string status, string log)
+    private void RefreshJobGrid()
+    {
+        var folders = _dbService.GetAllFolders();
+        productListControl.SetData(_jobs, folders);
+        
+        if (cboMainFolderSelect != null)
+        {
+            _isUpdatingFolders = true;
+            var currentId = cboMainFolderSelect.SelectedItem is ShopeeVideoUploader.Models.FolderItem fi ? fi.Id : -1;
+            cboMainFolderSelect.Items.Clear();
+            cboMainFolderSelect.Items.Add(new ShopeeVideoUploader.Models.FolderItem { Id = -1, Name = "Tất cả chiến dịch" });
+            cboMainFolderSelect.Items.Add(new ShopeeVideoUploader.Models.FolderItem { Id = 0, Name = "[Chưa phân loại]" });
+            foreach (var f in folders) cboMainFolderSelect.Items.Add(f);
+            
+            var found = false;
+            foreach (var item in cboMainFolderSelect.Items)
+            {
+                if (item is ShopeeVideoUploader.Models.FolderItem folder && folder.Id == currentId)
+                {
+                    cboMainFolderSelect.SelectedItem = item;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found && cboMainFolderSelect.Items.Count > 0) cboMainFolderSelect.SelectedIndex = 0;
+            _isUpdatingFolders = false;
+        }
+        
+        FilterJobsGrid();
+    }
+
+    private void UpdateJobRow(int index, string status, string log, string targetPlatform = "Shopee")
     {
         if (InvokeRequired)
         {
-            BeginInvoke(() => UpdateJobRow(index, status, log));
+            BeginInvoke(() => UpdateJobRow(index, status, log, targetPlatform));
             return;
         }
-        if (index < 0 || index >= dgvJobs.Rows.Count) return;
-        dgvJobs.Rows[index].Cells["colStatus"].Value = status;
-        dgvJobs.Rows[index].Cells["colShopeeStatus"].Value = _jobs[index].ShopeeStatus;
-        dgvJobs.Rows[index].Cells["colLog"].Value = log;
-        StyleStatusCell(dgvJobs.Rows[index].Cells["colStatus"], status);
-        StyleShopeeStatusCell(dgvJobs.Rows[index].Cells["colShopeeStatus"], _jobs[index].ShopeeStatus);
-        productListControl.UpdateProduct(index, _jobs[index]);
-        _dbService.UpdateJob(_jobs[index]);
+        if (index < 0 || index >= _jobs.Count) return;
+        
+        var job = _jobs[index];
+        job.Status = status;
+        job.Log = log;
+        if (status == "Thành công")
+        {
+            if (targetPlatform == "Shopee") job.ShopeeStatus = "Đã up Shopee";
+            if (targetPlatform == "Facebook") job.FbStatus = "Đã up Facebook";
+        }
+        
+        productListControl.UpdateProduct(index, job);
+        _dbService.UpdateJob(job);
     }
 
     private static void StyleShopeeStatusCell(DataGridViewCell cell, string status)
@@ -1420,6 +1652,12 @@ public partial class MainForm : Form
         SetStatus($"Đã cập nhật sản phẩm dòng {e.Index + 1}");
     }
 
+    private void ShowFolderManager()
+    {
+        using var dialog = new Controls.FolderManagerDialog(_dbService);
+        dialog.ShowDialog(this);
+        RefreshJobGrid();
+    }
     private void EditProduct()
     {
         var selectedIndices = productListControl.SelectedIndices;
@@ -1435,7 +1673,7 @@ public partial class MainForm : Form
                 return;
             }
 
-            using var bulkDialog = new ProductEditorDialog(selectedProducts, _jobs);
+            using var bulkDialog = new ProductEditorDialog(selectedProducts, _jobs, _dbService.GetAllFolders());
             if (bulkDialog.ShowDialog(this) != DialogResult.OK) return;
 
             for (var i = 0; i < selectedIndices.Count && i < bulkDialog.BulkResults.Count; i++)
@@ -1476,7 +1714,7 @@ public partial class MainForm : Form
         }
 
         var original = _jobs[index];
-        using var dialog = new ProductEditorDialog(original, _jobs.Select(j => j.VideoPath));
+        using var dialog = new ProductEditorDialog(original, _jobs.Select(j => j.VideoPath), _dbService.GetAllFolders());
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         var updated = dialog.Result;
@@ -1527,9 +1765,7 @@ public partial class MainForm : Form
     private void ShowProductView()
     {
         _iosPlaceholderLabel?.Hide();
-        workspace.Visible = false;
-        productModulePanel.Visible = true;
-        productModulePanel.BringToFront();
+        ShowAnimatedView(productModulePanel);
         topBar.BringToFront();
         panelStatusBar.BringToFront();
         SetActiveNavButton(navProducts);
@@ -1538,9 +1774,7 @@ public partial class MainForm : Form
     private void ShowWorkflowView()
     {
         _iosPlaceholderLabel?.Hide();
-        productModulePanel.Visible = false;
-        workspace.Visible = true;
-        workspace.BringToFront();
+        ShowAnimatedView(workspace);
         topBar.BringToFront();
         panelStatusBar.BringToFront();
         SetActiveNavButton(navWorkflow);
@@ -1586,9 +1820,7 @@ public partial class MainForm : Form
 
     private void ShowIosWorkflowView()
     {
-        productModulePanel.Visible = false;
-        workspace.Visible = true;
-        
+        ShowAnimatedView(workspace);
         topBar.BringToFront();
         panelStatusBar.BringToFront();
         SetActiveNavButton(navWorkflowIos);
@@ -1600,16 +1832,101 @@ public partial class MainForm : Form
         SetStatus("Tính năng Quy trình iPhone (WDA) đã sẵn sàng!");
     }
 
+    private void InitializeTikTokDownloader()
+    {
+        var navPanel = sidebar.Controls.OfType<FlowLayoutPanel>().FirstOrDefault();
+        if (navPanel != null)
+        {
+            navPanel.Height = 292;
+            _navTikTok = CreateNavButton("◌   Tải video TikTok", false);
+            navPanel.Controls.Add(_navTikTok);
+        }
+
+        _tikTokDownloaderControl = new TikTokDownloaderControl
+        {
+            Visible = false
+        };
+        _tikTokDownloaderControl.StatusChanged += (_, message) => SetStatus(message);
+        viewHost.Controls.Add(_tikTokDownloaderControl);
+    }
+
+    private void ShowTikTokDownloaderView()
+    {
+        _iosPlaceholderLabel?.Hide();
+        if (_tikTokDownloaderControl == null) return;
+
+        ShowAnimatedView(_tikTokDownloaderControl);
+        topBar.BringToFront();
+        panelStatusBar.BringToFront();
+        if (_navTikTok != null) SetActiveNavButton(_navTikTok);
+        SetStatus("Sẵn sàng tải video TikTok");
+    }
+
+    private void ShowAnimatedView(Control target)
+    {
+        if (_activeView == target && target.Visible) return;
+
+        _fadeTimer?.Stop();
+        _fadeTimer?.Dispose();
+        _fadeTimer = null;
+
+        foreach (Control view in viewHost.Controls)
+            view.Visible = view == target;
+
+        _activeView = target;
+        target.Visible = true;
+        target.BringToFront();
+
+        var finalBounds = viewHost.ClientRectangle;
+        if (finalBounds.Width <= 0 || finalBounds.Height <= 0)
+        {
+            target.Dock = DockStyle.Fill;
+            return;
+        }
+
+        target.Dock = DockStyle.None;
+        target.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        target.Bounds = new Rectangle(finalBounds.X + 22, finalBounds.Y, finalBounds.Width, finalBounds.Height);
+        _fadeValue = 0;
+        _fadeTimer = new System.Windows.Forms.Timer { Interval = 15 };
+        _fadeTimer.Tick += (_, _) =>
+        {
+            if (target.IsDisposed)
+            {
+                _fadeTimer?.Stop();
+                return;
+            }
+
+            _fadeValue = Math.Min(1, _fadeValue + 0.12);
+            var eased = 1 - Math.Pow(1 - _fadeValue, 3);
+            var left = finalBounds.X + (int)Math.Round(22 * (1 - eased));
+            target.Bounds = new Rectangle(left, finalBounds.Y, finalBounds.Width, finalBounds.Height);
+
+            if (_fadeValue >= 1)
+            {
+                _fadeTimer?.Stop();
+                _fadeTimer?.Dispose();
+                _fadeTimer = null;
+                target.Dock = DockStyle.Fill;
+            }
+        };
+        _fadeTimer.Start();
+    }
+
     private void SetActiveNavButton(Button activeButton)
     {
-        foreach (var button in new[] { navOverview, navWorkflow, navWorkflowIos, navProducts, navDevices, navLogs })
+        foreach (var button in new Button?[] { navOverview, navWorkflow, navWorkflowIos, navProducts, navDevices, navLogs, _navTikTok })
         {
             if (button == null) continue;
             var isActive = button == activeButton;
             button.BackColor = isActive ? Color.FromArgb(96, 82, 218) : Color.Transparent;
             button.ForeColor = isActive ? Color.White : Color.FromArgb(75, 80, 100);
+            button.Font = new Font("Segoe UI Semibold", 9F);
+            button.Padding = isActive ? new Padding(16, 0, 0, 0) : new Padding(13, 0, 0, 0);
+            button.Cursor = Cursors.Hand;
             button.FlatAppearance.BorderSize = 0;
             button.FlatAppearance.MouseOverBackColor = isActive ? Color.FromArgb(96, 82, 218) : Color.FromArgb(244, 245, 248);
+            button.Invalidate();
         }
     }
 
@@ -1641,11 +1958,83 @@ public partial class MainForm : Form
         if (_workflowSteps.Count == 0) { ShowError("Workflow đang trống."); return; }
         if (_jobs.Count == 0) { ShowError("Chưa có sản phẩm trong danh sách."); return; }
 
+        var selectedIndices = productListControl.SelectedIndices;
+        
+        string targetPlatform = "Shopee";
+        bool useAiTitle = false;
+        int delayMin = 0;
+        int delayMax = 0;
+        int folderId = -1;
+        
+        using (var dialog = new Controls.PlatformSelectDialog(_dbService.GetAllFolders(), selectedIndices.Count > 0))
+        {
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            targetPlatform = dialog.SelectedPlatform;
+            useAiTitle = dialog.UseAiTitle;
+            delayMin = dialog.DelayMinMinutes;
+            delayMax = dialog.DelayMaxMinutes;
+            folderId = dialog.SelectedFolderId;
+        }
+
+        List<Models.JobItem> jobsToRun = [];
+        if (folderId == -2) // Run selected rows
+        {
+            jobsToRun = selectedIndices.Where(i => i >= 0 && i < _jobs.Count).Select(i => _jobs[i]).ToList();
+        }
+        else if (folderId == -1) // All campaigns
+        {
+            jobsToRun = _jobs.ToList();
+        }
+        else // Specific campaign
+        {
+            jobsToRun = _jobs.Where(j => (j.FolderId ?? 0) == folderId).ToList();
+        }
+
+        if (jobsToRun.Count == 0) { ShowError("Chưa có sản phẩm nào thuộc thư mục này."); return; }
+
+        Func<JobItem, Task>? generateTitleFunc = null;
+        if (useAiTitle)
+        {
+            var configService = new Services.AiConfigService();
+            var aiService = new Services.AiTitleService();
+            var config = configService.Load();
+            generateTitleFunc = async (job) =>
+            {
+                try
+                {
+                    var newTitle = await aiService.GenerateTitleAsync(config, job.Title);
+                    if (newTitle != job.Title && !string.IsNullOrWhiteSpace(newTitle))
+                    {
+                        job.Title = newTitle;
+                        if (InvokeRequired)
+                        {
+                            BeginInvoke(() => {
+                                var index = _jobs.IndexOf(job);
+                                if (index >= 0) productListControl.UpdateProduct(index, job);
+                            });
+                        }
+                        else
+                        {
+                            var index = _jobs.IndexOf(job);
+                            if (index >= 0) productListControl.UpdateProduct(index, job);
+                        }
+                        _dbService.UpdateJob(job);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"[AI] Bỏ qua vì lỗi API: {ex.Message}");
+                    if (InvokeRequired) BeginInvoke(() => SetStatus($"Lỗi AI: {ex.Message}"));
+                    else SetStatus($"Lỗi AI: {ex.Message}");
+                }
+            };
+        }
+
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
         btnStart.Enabled = false;
         btnStop.Enabled = true;
-        progressBar.Maximum = Math.Max(1, _jobs.Count);
+        progressBar.Maximum = Math.Max(1, jobsToRun.Count);
         progressBar.Value = 0;
         SetStatus("Đang chạy workflow...");
         workflowCanvas.ClearRunningStep();
@@ -1655,22 +2044,22 @@ public partial class MainForm : Form
             if (_isIosMode)
             {
                 _iosEngine = new IosWorkflowEngine(_iosManager);
-                await _iosEngine.RunAllJobsAsync(_workflowSteps, _jobs, _currentIosDeviceId, token, (index, status, log) =>
+                await _iosEngine.RunAllJobsAsync(_workflowSteps, jobsToRun, _currentIosDeviceId, token, (index, status, log) =>
                 {
-                    UpdateJobRow(index, status, log);
+                    UpdateJobRow(index, status, log, targetPlatform);
                     if (status is "Thành công" or "Lỗi")
                         BeginInvoke(() => progressBar.Value = Math.Min(progressBar.Maximum, progressBar.Value + 1));
-                }, _variables, stepIndex => SetRunningStepFromWorker(stepIndex));
+                }, targetPlatform, _variables, stepIndex => SetRunningStepFromWorker(stepIndex), preJobAction: generateTitleFunc, delayBetweenJobsMinMinutes: delayMin, delayBetweenJobsMaxMinutes: delayMax);
             }
             else
             {
                 _engine = new WorkflowEngine(_adb, SendTextThroughAdbAsync);
-                _currentDevice = await _engine.RunAllJobsAsync(_workflowSteps, _jobs, _currentDevice!, token, (index, status, log) =>
+                _currentDevice = await _engine.RunAllJobsAsync(_workflowSteps, jobsToRun, _currentDevice!, token, (index, status, log) =>
                 {
-                    UpdateJobRow(index, status, log);
+                    UpdateJobRow(index, status, log, targetPlatform);
                     if (status is "Thành công" or "Lỗi")
                         BeginInvoke(() => progressBar.Value = Math.Min(progressBar.Maximum, progressBar.Value + 1));
-                }, _variables, stepIndex => SetRunningStepFromWorker(stepIndex));
+                }, targetPlatform, _variables, stepIndex => SetRunningStepFromWorker(stepIndex), preJobAction: generateTitleFunc, delayBetweenJobsMinMinutes: delayMin, delayBetweenJobsMaxMinutes: delayMax);
             }
             
             SetStatus("Hoàn tất tất cả jobs");
@@ -1714,9 +2103,71 @@ public partial class MainForm : Form
             MessageBoxIcon.Warning);
         if (confirm != DialogResult.Yes) return;
 
+        var selectedIndices = productListControl.SelectedIndices;
+        string targetPlatform = "Shopee";
+        bool useAiTitle = false;
+        int delayMin = 0;
+        int delayMax = 0;
+        int folderId = -1;
+        using (var dialog = new Controls.PlatformSelectDialog(_dbService.GetAllFolders(), selectedIndices.Count > 0))
+        {
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            targetPlatform = dialog.SelectedPlatform;
+            useAiTitle = dialog.UseAiTitle;
+            delayMin = dialog.DelayMinMinutes;
+            delayMax = dialog.DelayMaxMinutes;
+            folderId = dialog.SelectedFolderId;
+        }
+
+        Func<JobItem, Task>? generateTitleFunc = null;
+        if (useAiTitle)
+        {
+            var configService = new Services.AiConfigService();
+            var aiService = new Services.AiTitleService();
+            var config = configService.Load();
+            generateTitleFunc = async (job) =>
+            {
+                try
+                {
+                    var newTitle = await aiService.GenerateTitleAsync(config, job.Title);
+                    if (newTitle != job.Title && !string.IsNullOrWhiteSpace(newTitle))
+                    {
+                        job.Title = newTitle;
+                        if (InvokeRequired)
+                        {
+                            BeginInvoke(() => {
+                                var index = _jobs.IndexOf(job);
+                                if (index >= 0) productListControl.UpdateProduct(index, job);
+                            });
+                        }
+                        else
+                        {
+                            var index = _jobs.IndexOf(job);
+                            if (index >= 0) productListControl.UpdateProduct(index, job);
+                        }
+                        _dbService.UpdateJob(job);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"[AI] Bỏ qua vì lỗi API: {ex.Message}");
+                    if (InvokeRequired) BeginInvoke(() => SetStatus($"Lỗi AI: {ex.Message}"));
+                    else SetStatus($"Lỗi AI: {ex.Message}");
+                }
+            };
+        }
+
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
-        var testJob = _jobs.FirstOrDefault() ?? new JobItem { Id = 0, Title = "Chạy thử" };
+        
+        JobItem? testJob = null;
+        if (targetPlatform == "Shopee")
+            testJob = _jobs.FirstOrDefault(j => j.ShopeeStatus != "Đã up Shopee");
+        else if (targetPlatform == "Facebook")
+            testJob = _jobs.FirstOrDefault(j => j.FbStatus != "Đã up Facebook");
+
+        testJob ??= _jobs.FirstOrDefault() ?? new JobItem { Id = 0, Title = "Chạy thử" };
+        
         btnStart.Enabled = false;
         btnTestWorkflow.Enabled = false;
         btnStop.Enabled = true;
@@ -1835,6 +2286,8 @@ public partial class MainForm : Form
 
     private void MainForm_FormClosing(object? sender, FormClosingEventArgs e)
     {
+        _fadeTimer?.Stop();
+        _fadeTimer?.Dispose();
         SaveAutoSavedWorkflow();
         _cts?.Cancel();
         _recordingCts?.Cancel();
