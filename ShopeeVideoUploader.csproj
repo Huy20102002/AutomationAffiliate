@@ -9,6 +9,9 @@
     <ApplicationIcon />
     <RootNamespace>ShopeeVideoUploader</RootNamespace>
     <AssemblyName>ShopeeVideoUploader</AssemblyName>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <DefaultItemExcludes>$(DefaultItemExcludes);spreadsheet-work\**;node_modules\**;Installer\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>

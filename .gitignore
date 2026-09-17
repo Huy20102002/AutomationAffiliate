@@ -7,6 +7,24 @@ obj/
 *.user
 *.suo
 *.userosscache
+*.pdb
+
+# Executables & Binaries & Archives
+*.exe
+*.dll
+*.zip
+publish_release/
+Release_FlowPilot/
+Installer/payload.zip
+Installer/bin/
+Installer/obj/
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 
 # Node modules & frontend builds
 node_modules/
@@ -14,10 +32,18 @@ node_modules/
 dist/
 build/
 
-# Python & Temporary outputs
+# Python & Temporary outputs & Scratch scripts
 __pycache__/
 *.pyc
 outputs/
+*.txt
+extract_*.py
+patch_*.py
+fix_*.py
+list_*.py
+find_*.py
+update_*.py
+.antigravityignore
 
 # OS generated
 [D|d]esktop.ini

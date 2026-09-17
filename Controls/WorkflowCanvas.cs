@@ -13,6 +13,10 @@ public sealed class WorkflowCanvas : ScrollableControl
     private readonly System.Windows.Forms.Timer _pulseTimer;
     private IReadOnlyList<WorkflowStep> _steps = [];
     private int _selectedIndex = -1;
+    private readonly HashSet<int> _selectedIndices = [];
+    private bool _isSelecting;
+    private Point _selectionStartPoint;
+    private Point _selectionCurrentPoint;
     private int _runningIndex = -1;
     private int _hoverIndex = -1;
     private float _pulse;
@@ -33,9 +37,19 @@ public sealed class WorkflowCanvas : ScrollableControl
     public event EventHandler<int>? StepMoved;
     public event EventHandler<(StepType Type, Point Location)>? StepDropRequested;
     public event EventHandler<float>? ZoomChanged;
+    public event EventHandler<IReadOnlySet<int>>? MultiSelectionChanged;
 
     public int SelectedIndex => _selectedIndex;
+    public IReadOnlySet<int> SelectedIndices => _selectedIndices;
     public float Zoom => _zoom;
+
+    public void ClearMultiSelection()
+    {
+        if (_selectedIndices.Count == 0) return;
+        _selectedIndices.Clear();
+        Invalidate();
+        MultiSelectionChanged?.Invoke(this, _selectedIndices);
+    }
 
     public void SetRunningStep(int index)
     {
@@ -94,6 +108,7 @@ public sealed class WorkflowCanvas : ScrollableControl
     public void SetSteps(IReadOnlyList<WorkflowStep> steps)
     {
         _steps = steps;
+        _selectedIndices.RemoveWhere(i => i >= _steps.Count);
         if (_selectedIndex >= _steps.Count)
             _selectedIndex = _steps.Count - 1;
         
@@ -103,6 +118,9 @@ public sealed class WorkflowCanvas : ScrollableControl
     public void SelectStep(int index)
     {
         _selectedIndex = index >= 0 && index < _steps.Count ? index : -1;
+        _selectedIndices.Clear();
+        if (_selectedIndex >= 0) _selectedIndices.Add(_selectedIndex);
+        MultiSelectionChanged?.Invoke(this, _selectedIndices);
         Invalidate();
     }
 
@@ -167,6 +185,25 @@ public sealed class WorkflowCanvas : ScrollableControl
             Invalidate();
             return;
         }
+        if (_isSelecting)
+        {
+            _selectionCurrentPoint = ToCanvasPoint(e.Location);
+            _wasDragged = true;
+            var selRect = GetSelectionRectangle();
+            var rects = GetNodeRects();
+            _selectedIndices.Clear();
+
+            for (var i = 0; i < rects.Count; i++)
+            {
+                if (selRect.IntersectsWith(rects[i]))
+                    _selectedIndices.Add(i);
+            }
+            if (_selectedIndices.Count > 0 && !_selectedIndices.Contains(_selectedIndex))
+                _selectedIndex = _selectedIndices.First();
+            MultiSelectionChanged?.Invoke(this, _selectedIndices);
+            Invalidate();
+            return;
+        }
         if (_dragIndex >= 0)
         {
             var point = ToCanvasPoint(e.Location);
@@ -207,9 +244,44 @@ public sealed class WorkflowCanvas : ScrollableControl
             return;
         }
         var hit = HitTest(e.Location);
-        if (hit < 0) return;
+        if (hit < 0)
+        {
+            _selectedIndices.Clear();
+            _selectedIndex = -1;
+            MultiSelectionChanged?.Invoke(this, _selectedIndices);
+            Invalidate();
+            return;
+        }
+
+        if ((ModifierKeys & Keys.Control) == Keys.Control)
+        {
+            if (_selectedIndices.Contains(hit))
+                _selectedIndices.Remove(hit);
+            else
+                _selectedIndices.Add(hit);
+            _selectedIndex = hit;
+            MultiSelectionChanged?.Invoke(this, _selectedIndices);
+            Invalidate();
+            return;
+        }
+
+        if ((ModifierKeys & Keys.Shift) == Keys.Shift && _selectedIndex >= 0)
+        {
+            var start = Math.Min(_selectedIndex, hit);
+            var end = Math.Max(_selectedIndex, hit);
+            _selectedIndices.Clear();
+            for (int i = start; i <= end; i++) _selectedIndices.Add(i);
+            _selectedIndex = hit;
+            MultiSelectionChanged?.Invoke(this, _selectedIndices);
+            Invalidate();
+            return;
+        }
+
+        _selectedIndices.Clear();
+        _selectedIndices.Add(hit);
         _selectedIndex = hit;
         StepSelected?.Invoke(this, hit);
+        MultiSelectionChanged?.Invoke(this, _selectedIndices);
         Invalidate();
     }
 
@@ -227,11 +299,26 @@ public sealed class WorkflowCanvas : ScrollableControl
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
-        if (e.Button != MouseButtons.Left && e.Button != MouseButtons.Middle) return;
+        if (e.Button != MouseButtons.Left && e.Button != MouseButtons.Middle && e.Button != MouseButtons.Right) return;
         var hit = HitTest(e.Location);
+        var isCtrl = (ModifierKeys & Keys.Control) == Keys.Control;
 
-        // Kéo vùng trống bằng chuột trái, hoặc giữ Space/chuột giữa để di chuyển toàn canvas.
-        if (e.Button == MouseButtons.Middle || (e.Button == MouseButtons.Left && (hit < 0 || (ModifierKeys & Keys.Space) == Keys.Space)))
+        // Chỉ khi giữ Ctrl + chuột trái -> Bôi chọn vùng (Marquee selection)
+        if (e.Button == MouseButtons.Left && isCtrl)
+        {
+            _isSelecting = true;
+            _selectionStartPoint = ToCanvasPoint(e.Location);
+            _selectionCurrentPoint = _selectionStartPoint;
+            _wasDragged = false;
+            Capture = true;
+            Invalidate();
+            return;
+        }
+
+        // Kéo vùng trống bằng chuột trái, hoặc giữ Space/chuột giữa để di chuyển toàn canvas (như bình thường)
+        if (e.Button == MouseButtons.Middle || 
+            (e.Button == MouseButtons.Left && (hit < 0 || (ModifierKeys & Keys.Space) == Keys.Space)) ||
+            (e.Button == MouseButtons.Right && hit < 0))
         {
             _isPanning = true;
             _panStartPoint = e.Location;
@@ -241,7 +328,16 @@ public sealed class WorkflowCanvas : ScrollableControl
             Cursor = Cursors.SizeAll;
             return;
         }
+
         if (hit < 0) return;
+
+        // Bấm vào node khi không giữ Ctrl
+        if (!_selectedIndices.Contains(hit))
+        {
+            _selectedIndices.Clear();
+            _selectedIndices.Add(hit);
+            MultiSelectionChanged?.Invoke(this, _selectedIndices);
+        }
         _selectedIndex = hit;
         StepSelected?.Invoke(this, hit);
         var point = ToCanvasPoint(e.Location);
@@ -266,12 +362,39 @@ public sealed class WorkflowCanvas : ScrollableControl
             Invalidate();
             return;
         }
+        if (_isSelecting)
+        {
+            _isSelecting = false;
+            Capture = false;
+            Invalidate();
+            // Nếu chỉ Ctrl + Click mà không rê chuột kéo chọn vùng
+            if (!_wasDragged)
+            {
+                var hit = HitTest(e.Location);
+                if (hit >= 0)
+                {
+                    if (_selectedIndices.Contains(hit))
+                        _selectedIndices.Remove(hit);
+                    else
+                        _selectedIndices.Add(hit);
+                    _selectedIndex = hit;
+                    MultiSelectionChanged?.Invoke(this, _selectedIndices);
+                }
+            }
+            return;
+        }
         if (e.Button == MouseButtons.Right)
         {
             var hit = HitTest(e.Location);
             if (hit >= 0)
             {
-                _selectedIndex = hit;
+                if (!_selectedIndices.Contains(hit))
+                {
+                    _selectedIndices.Clear();
+                    _selectedIndices.Add(hit);
+                    _selectedIndex = hit;
+                    MultiSelectionChanged?.Invoke(this, _selectedIndices);
+                }
                 StepSelected?.Invoke(this, hit);
                 StepContextRequested?.Invoke(this, hit);
                 Invalidate();
@@ -287,6 +410,18 @@ public sealed class WorkflowCanvas : ScrollableControl
         if (didMove && target >= 0 && target != from)
             StepReorderRequested?.Invoke(this, (from, target));
         Invalidate();
+    }
+
+    private Rectangle GetSelectionRectangle()
+    {
+        const int canvasMargin = 260;
+        var p1 = new Point(_selectionStartPoint.X + canvasMargin, _selectionStartPoint.Y + canvasMargin);
+        var p2 = new Point(_selectionCurrentPoint.X + canvasMargin, _selectionCurrentPoint.Y + canvasMargin);
+        var x = Math.Min(p1.X, p2.X);
+        var y = Math.Min(p1.Y, p2.Y);
+        var w = Math.Abs(p1.X - p2.X);
+        var h = Math.Abs(p1.Y - p2.Y);
+        return new Rectangle(x, y, w, h);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -320,6 +455,18 @@ public sealed class WorkflowCanvas : ScrollableControl
 
         for (var i = 0; i < rects.Count; i++)
             DrawNode(e.Graphics, rects[i], _steps[i], i);
+
+        if (_isSelecting)
+        {
+            var selRect = GetSelectionRectangle();
+            if (selRect.Width > 0 && selRect.Height > 0)
+            {
+                using var fillBrush = new SolidBrush(Color.FromArgb(40, 99, 102, 241));
+                using var borderPen = new Pen(Color.FromArgb(180, 99, 102, 241), 1.5f) { DashStyle = DashStyle.Dash };
+                e.Graphics.FillRectangle(fillBrush, selRect);
+                e.Graphics.DrawRectangle(borderPen, selRect);
+            }
+        }
     }
 
     private void DrawGrid(Graphics g)
@@ -355,7 +502,8 @@ public sealed class WorkflowCanvas : ScrollableControl
     private void DrawNode(Graphics g, Rectangle rect, WorkflowStep step, int index)
     {
         var accent = GetAccent(step.Type);
-        var selected = index == _selectedIndex;
+        var isMultiSelected = _selectedIndices.Contains(index);
+        var selected = index == _selectedIndex || isMultiSelected;
         var running = index == _runningIndex;
         var hovered = index == _hoverIndex;
         var fill = running
@@ -506,12 +654,14 @@ public sealed class WorkflowCanvas : ScrollableControl
         StepType.Tap => Color.FromArgb(92, 143, 255),
         StepType.InputText => Color.FromArgb(185, 111, 255),
         StepType.PushVideo => Color.FromArgb(0, 211, 164),
+        StepType.PushImage => Color.FromArgb(245, 158, 11),
         StepType.Delay => Color.FromArgb(249, 189, 82),
         StepType.Swipe => Color.FromArgb(89, 205, 187),
         StepType.OpenApp => Color.FromArgb(255, 112, 153),
         StepType.KeyEvent => Color.FromArgb(149, 163, 255),
         StepType.MediaScan => Color.FromArgb(72, 197, 255),
         StepType.AdbShell => Color.FromArgb(232, 147, 61),
+        StepType.RandomTap => Color.FromArgb(168, 85, 247),
         _ => Color.FromArgb(140, 154, 174)
     };
 
@@ -520,8 +670,10 @@ public sealed class WorkflowCanvas : ScrollableControl
         StepType.Start => "▶",
         StepType.End => "⚑",
         StepType.Tap => "●",
+        StepType.RandomTap => "🎲",
         StepType.InputText => "T",
         StepType.PushVideo => "↑",
+        StepType.PushImage => "🖼",
         StepType.Delay => "◷",
         StepType.Swipe => "↔",
         StepType.OpenApp => "◆",
@@ -539,15 +691,25 @@ public sealed class WorkflowCanvas : ScrollableControl
             StepType.End => "Kết thúc quy trình",
             StepType.Tap => step.TapMode switch
             {
-                TapMode.XPath => $"Chạm XPath  {Trim(step.TapXPath)}",
+                TapMode.XPath => step.TapMultiMode switch
+                {
+                    TapMultiMode.ByImageCount => $"Chạm XPath (xSố ảnh)  {Trim(step.TapXPath)}",
+                    TapMultiMode.All => $"Chạm XPath (xTất cả)  {Trim(step.TapXPath)}",
+                    TapMultiMode.CustomCount => $"Chạm XPath (x{step.TapCustomCount})  {Trim(step.TapXPath)}",
+                    _ => $"Chạm XPath  {Trim(step.TapXPath)}"
+                },
                 TapMode.Image => $"Chạm ảnh  {Path.GetFileName(step.TapImagePath)}",
                 _ => $"Chạm  ({step.X}, {step.Y})"
             },
+            StepType.RandomTap => step.RandomCoordinates.Count > 0
+                ? $"Ngẫu nhiên ({step.RandomCoordinates.Count} điểm)  {string.Join(", ", step.RandomCoordinates.Take(2).Select(p => $"({p.X},{p.Y})"))}{(step.RandomCoordinates.Count > 2 ? "..." : "")}"
+                : $"Ngẫu nhiên  ({step.X}, {step.Y})",
             StepType.Swipe => $"Vuốt  ({step.X},{step.Y}) → ({step.X2},{step.Y2})",
             StepType.InputText => string.IsNullOrWhiteSpace(step.TextValue)
                 ? (string.IsNullOrWhiteSpace(step.BindingColumn) ? "Chưa cấu hình" : $"Lấy cột {step.BindingColumn}")
                 : Trim(step.TextValue),
             StepType.PushVideo => "Đẩy video lên thiết bị",
+            StepType.PushImage => "Đẩy ảnh lên thiết bị",
             StepType.Delay => $"Chờ {step.DelayAfterMs} ms",
             StepType.OpenApp => Trim(step.TextValue),
             StepType.KeyEvent => $"Phím {step.TextValue}",

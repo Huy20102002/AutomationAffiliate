@@ -20,8 +20,8 @@ public static class ExcelService
         if (rows.Count > 0)
         {
             var firstRow = (IDictionary<string, object>)rows[0];
-            if (!HasColumn(firstRow, "VideoPath"))
-                throw new InvalidDataException("File Excel phải có cột VideoPath để đẩy video lên điện thoại.");
+            if (!HasColumn(firstRow, "VideoPath") && !HasColumn(firstRow, "ImagePath") && !HasColumn(firstRow, "Image") && !HasColumn(firstRow, "Anh"))
+                throw new InvalidDataException("File Excel phải có cột VideoPath hoặc ImagePath để đẩy media lên điện thoại.");
         }
 
         foreach (var row in rows)
@@ -31,14 +31,24 @@ public static class ExcelService
                 pair => pair.Key,
                 pair => pair.Value?.ToString() ?? string.Empty,
                 StringComparer.OrdinalIgnoreCase);
+
+            var mediaPath = GetValue(dict, "VideoPath").Trim().Trim('"');
+            if (string.IsNullOrWhiteSpace(mediaPath))
+                mediaPath = GetValue(dict, "ImagePath").Trim().Trim('"');
+            if (string.IsNullOrWhiteSpace(mediaPath))
+                mediaPath = GetValue(dict, "Image").Trim().Trim('"');
+            if (string.IsNullOrWhiteSpace(mediaPath))
+                mediaPath = GetValue(dict, "Anh").Trim().Trim('"');
+
             jobs.Add(new JobItem
             {
                 Id = id++,
-                VideoPath = GetValue(dict, "VideoPath").Trim().Trim('"'),
+                VideoPath = mediaPath,
                 ShopeeAffLink = GetValue(dict, "ShopeeAffLink"),
                 Title = GetValue(dict, "Title"),
-                Status = "Chờ",
-                ShopeeStatus = "Chưa up Shopee",
+                Status = JobStatus.Waiting,
+                ShopeeStatus = JobStatus.ShopeePending,
+                FbStatus = JobStatus.FacebookPending,
                 Log = "",
                 Data = data
             });

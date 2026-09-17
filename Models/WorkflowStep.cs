@@ -1,3 +1,4 @@
+using System.Drawing;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 
@@ -25,6 +26,9 @@ public enum StepType
     /// <summary>Push video từ PC vào điện thoại qua ADB</summary>
     PushVideo,
 
+    /// <summary>Push ảnh từ PC vào điện thoại qua ADB</summary>
+    PushImage,
+
     /// <summary>Chờ một khoảng thời gian (ms)</summary>
     Delay,
 
@@ -41,7 +45,10 @@ public enum StepType
     MediaScan,
 
     /// <summary>Chạy một lệnh adb shell tùy chỉnh</summary>
-    AdbShell
+    AdbShell,
+
+    /// <summary>Chạm ngẫu nhiên 1 trong nhóm tọa độ đã định nghĩa</summary>
+    RandomTap
 }
 
 [JsonConverter(typeof(StringEnumConverter))]
@@ -59,6 +66,15 @@ public enum TapMode
     Image
 }
 
+[JsonConverter(typeof(StringEnumConverter))]
+public enum TapMultiMode
+{
+    Single,
+    ByImageCount,
+    All,
+    CustomCount
+}
+
 /// <summary>
 /// Đại diện cho một bước trong Workflow No-Code.
 /// Mỗi bước chứa đầy đủ thông số để thực thi hành động tương ứng.
@@ -70,8 +86,10 @@ public class WorkflowStep
         StepType.Start => "Bắt đầu",
         StepType.End => "Kết thúc",
         StepType.Tap => "Chạm",
+        StepType.RandomTap => "Chạm ngẫu nhiên",
         StepType.InputText => "Nhập văn bản",
         StepType.PushVideo => "Đẩy video",
+        StepType.PushImage => "Đẩy ảnh",
         StepType.Delay => "Chờ",
         StepType.Swipe => "Vuốt",
         StepType.OpenApp => "Mở ứng dụng",
@@ -90,8 +108,14 @@ public class WorkflowStep
     /// <summary>Tọa độ Y cho Tap</summary>
     public int Y { get; set; }
 
+    /// <summary>Danh sách tọa độ cho bước Chạm ngẫu nhiên (chọn ngẫu nhiên 1 điểm khi chạy)</summary>
+    public List<Point> RandomCoordinates { get; set; } = [];
+
     public TapMode TapMode { get; set; } = TapMode.Coordinates;
     public string TapXPath { get; set; } = string.Empty;
+    public TapMultiMode TapMultiMode { get; set; } = TapMultiMode.Single;
+    public int TapCustomCount { get; set; } = 1;
+    public int MultiTapDelayMs { get; set; } = 250;
     public string TapImagePath { get; set; } = string.Empty;
     public double TapImageThreshold { get; set; } = 0.88;
     public int TapImageTimeoutMs { get; set; } = 5000;
@@ -143,8 +167,14 @@ public class WorkflowStep
     /// <summary>Mô tả bước hiển thị trên UI (tùy chọn)</summary>
     public string Description { get; set; } = string.Empty;
 
+    /// <summary>Bỏ qua bước này từ job thứ 2 trở đi (Áp dụng cho Mở ứng dụng)</summary>
+    public bool SkipFromSecondJob { get; set; } = true;
+
     /// <summary>Sử dụng AI để xử lý lại văn bản trước khi nhập (áp dụng cho InputText)</summary>
     public bool UseAiForText { get; set; }
+
+    /// <summary>Khi nhập link ({ShopeeAffLink}): true = lấy tất cả link; false = chỉ lấy duy nhất 1 link đầu tiên</summary>
+    public bool TakeAllLinks { get; set; }
 
     /// <summary>
     /// Vị trí node trên canvas. Giá trị âm nghĩa là canvas tự xếp layout.
@@ -165,14 +195,24 @@ public class WorkflowStep
         {
             StepType.Tap => TapMode switch
             {
-                TapMode.XPath => $"[Chạm XPath] {TapXPath}",
+                TapMode.XPath => TapMultiMode switch
+                {
+                    TapMultiMode.ByImageCount => $"[Chạm XPath xSố ảnh] {TapXPath}",
+                    TapMultiMode.All => $"[Chạm XPath xTất cả] {TapXPath}",
+                    TapMultiMode.CustomCount => $"[Chạm XPath x{TapCustomCount}] {TapXPath}",
+                    _ => $"[Chạm XPath] {TapXPath}"
+                },
                 TapMode.Image => $"[Chạm ảnh] {Path.GetFileName(TapImagePath)}",
                 _ => $"[Chạm] ({X}, {Y})"
             },
+            StepType.RandomTap => RandomCoordinates.Count > 0
+                ? $"[Chạm ngẫu nhiên] {RandomCoordinates.Count} điểm ({string.Join(", ", RandomCoordinates.Take(3).Select(p => $"({p.X},{p.Y})"))}{(RandomCoordinates.Count > 3 ? "..." : "")})"
+                : $"[Chạm ngẫu nhiên] ({X}, {Y})",
             StepType.Start => "[Bắt đầu] Bắt đầu quy trình",
             StepType.End => "[Kết thúc] Kết thúc quy trình",
             StepType.InputText => $"[Nhập văn bản] \"{(TextValue.Length > 30 ? TextValue[..30] + "..." : TextValue)}\"",
             StepType.PushVideo => "[Đẩy video] → /sdcard/DCIM/Camera/",
+            StepType.PushImage => "[Đẩy ảnh] → /sdcard/DCIM/Camera/",
             StepType.Delay => DelayMaxMs.HasValue ? $"[Chờ] {DelayAfterMs}-{DelayMaxMs} ms" : $"[Chờ] {DelayAfterMs} ms",
             StepType.Swipe => $"[Vuốt] ({X},{Y}) → ({X2},{Y2})",
             StepType.OpenApp => $"[Mở ứng dụng] {TextValue}",

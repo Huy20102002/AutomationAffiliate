@@ -10,12 +10,10 @@ public sealed class PlatformSelectDialog : Form
     public bool UseAiTitle { get; private set; }
     public int DelayMinMinutes { get; private set; }
     public int DelayMaxMinutes { get; private set; }
-    public int SelectedFolderId { get; private set; }
-
-    public PlatformSelectDialog(System.Collections.Generic.IReadOnlyList<ShopeeVideoUploader.Models.FolderItem> folders, bool hasSelectedRows)
+    public PlatformSelectDialog()
     {
         Text = "Chọn nền tảng";
-        ClientSize = new Size(360, 325);
+        ClientSize = new Size(360, 260);
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -42,33 +40,10 @@ public sealed class PlatformSelectDialog : Form
             Size = new Size(316, 30)
         };
         
-        var lblFolder = new Label
-        {
-            Text = "Chọn chiến dịch:",
-            Location = new Point(22, 85),
-            AutoSize = true,
-            Font = new Font("Segoe UI", 9F)
-        };
-
-        var folderPicker = new Guna.UI2.WinForms.Guna2ComboBox
-        {
-            Location = new Point(130, 80),
-            Size = new Size(210, 30),
-            FillColor = Color.White, BorderRadius = 4, BorderThickness = 1,
-            BorderColor = Color.FromArgb(190, 198, 211),
-            DropDownStyle = ComboBoxStyle.DropDownList,
-            DisplayMember = "Name", ValueMember = "Id"
-        };
-        if (hasSelectedRows) folderPicker.Items.Add(new ShopeeVideoUploader.Models.FolderItem { Id = -2, Name = "Chạy các dòng đang chọn" });
-        folderPicker.Items.Add(new ShopeeVideoUploader.Models.FolderItem { Id = -1, Name = "Tất cả chiến dịch" });
-        folderPicker.Items.Add(new ShopeeVideoUploader.Models.FolderItem { Id = 0, Name = "[Chưa phân loại]" });
-        foreach (var f in folders) folderPicker.Items.Add(f);
-        folderPicker.SelectedIndex = 0;
-
         var chkUseAi = new Guna.UI2.WinForms.Guna2CheckBox
         {
             Text = "Tạo tiêu đề chuẩn SEO bằng AI trước khi đăng",
-            Location = new Point(22, 160),
+            Location = new Point(22, 95),
             AutoSize = true,
             Font = new Font("Segoe UI", 9F),
             Cursor = Cursors.Hand
@@ -77,7 +52,7 @@ public sealed class PlatformSelectDialog : Form
         var btnConfigAi = new Guna.UI2.WinForms.Guna2Button
         {
             Text = "⚙",
-            Location = new Point(310, 120),
+            Location = new Point(310, 90),
             Size = new Size(30, 30),
             FillColor = Color.FromArgb(235, 237, 242),
             ForeColor = Color.FromArgb(70, 70, 85),
@@ -99,14 +74,14 @@ public sealed class PlatformSelectDialog : Form
         var lblDelay = new Label
         {
             Text = "Nghỉ giữa các video (phút):",
-            Location = new Point(22, 160),
+            Location = new Point(22, 135),
             AutoSize = true,
             Font = new Font("Segoe UI", 9F)
         };
 
         var numMin = new Guna.UI2.WinForms.Guna2NumericUpDown
         {
-            Location = new Point(190, 155),
+            Location = new Point(190, 130),
             Size = new Size(60, 30),
             Minimum = 0,
             Maximum = 999,
@@ -119,14 +94,14 @@ public sealed class PlatformSelectDialog : Form
         var lblTo = new Label
         {
             Text = "-",
-            Location = new Point(255, 160),
+            Location = new Point(255, 135),
             AutoSize = true,
             Font = new Font("Segoe UI", 9F)
         };
 
         var numMax = new Guna.UI2.WinForms.Guna2NumericUpDown
         {
-            Location = new Point(275, 155),
+            Location = new Point(275, 130),
             Size = new Size(60, 30),
             Minimum = 0,
             Maximum = 999,
@@ -139,7 +114,7 @@ public sealed class PlatformSelectDialog : Form
         var btnShopee = new Guna.UI2.WinForms.Guna2Button
         {
             Text = "Shopee",
-            Location = new Point(20, 225),
+            Location = new Point(20, 190),
             Size = new Size(150, 44),
             FillColor = Color.FromArgb(238, 77, 45),
             ForeColor = Color.White,
@@ -152,7 +127,6 @@ public sealed class PlatformSelectDialog : Form
             UseAiTitle = chkUseAi.Checked;
             DelayMinMinutes = (int)numMin.Value;
             DelayMaxMinutes = (int)numMax.Value;
-            SelectedFolderId = (folderPicker.SelectedItem as ShopeeVideoUploader.Models.FolderItem)?.Id ?? -1;
             SelectedPlatform = "Shopee";
             DialogResult = DialogResult.OK;
             Close();
@@ -161,7 +135,7 @@ public sealed class PlatformSelectDialog : Form
         var btnFb = new Guna.UI2.WinForms.Guna2Button
         {
             Text = "Facebook",
-            Location = new Point(180, 225),
+            Location = new Point(180, 190),
             Size = new Size(150, 44),
             FillColor = Color.FromArgb(24, 119, 242),
             ForeColor = Color.White,
@@ -174,12 +148,11 @@ public sealed class PlatformSelectDialog : Form
             UseAiTitle = chkUseAi.Checked;
             DelayMinMinutes = (int)numMin.Value;
             DelayMaxMinutes = (int)numMax.Value;
-            SelectedFolderId = (folderPicker.SelectedItem as ShopeeVideoUploader.Models.FolderItem)?.Id ?? -1;
             SelectedPlatform = "Facebook";
             DialogResult = DialogResult.OK;
             Close();
         };
 
-        Controls.AddRange([lblTitle, lblDesc, lblFolder, folderPicker, chkUseAi, btnConfigAi, lblDelay, numMin, lblTo, numMax, btnShopee, btnFb]);
+        Controls.AddRange([lblTitle, lblDesc, chkUseAi, btnConfigAi, lblDelay, numMin, lblTo, numMax, btnShopee, btnFb]);
     }
 }

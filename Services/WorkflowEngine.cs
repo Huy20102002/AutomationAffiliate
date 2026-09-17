@@ -62,7 +62,7 @@ public sealed class WorkflowEngine
         IReadOnlyList<WorkflowVariable>? variables = null,
         Action<int>? onStepStarted = null,
         string targetPlatform = "Shopee",
-        bool skipOpenApp = false,
+        bool isNotFirstJob = false,
         Func<ShopeeVideoUploader.Models.JobItem, Task>? preJobAction = null)
     {
         if (preJobAction != null)
@@ -74,8 +74,9 @@ public sealed class WorkflowEngine
         for (var i = 0; i < steps.Count; i++)
         {
             ct.ThrowIfCancellationRequested();
+
             var step = steps[i];
-            var isSkippedOpenApp = skipOpenApp && step.Type == StepType.OpenApp;
+            var isSkippedOpenApp = isNotFirstJob && step.Type == StepType.OpenApp && step.SkipFromSecondJob;
             var stepInfo = $"[{i + 1}/{steps.Count}] {step.GetDisplayText()}";
             if (isSkippedOpenApp)
                 stepInfo += " · bỏ qua từ job thứ 2";
@@ -86,24 +87,45 @@ public sealed class WorkflowEngine
 
             onStepStarted?.Invoke(i);
 
-            try
+            const int maxRetries = 3;
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
             {
-                await ExecuteStepAsync(step, job, device, ct, variables);
-            }
-            catch (Exception ex) when (ex.Message.Contains("no device with transport id", StringComparison.OrdinalIgnoreCase))
-            {
-                Logger.Warn($"[ADB] Thiết bị mất kết nối (transport id thay đổi), đang thử kết nối lại...");
-                await Task.Delay(2000, ct); // Đợi ADB server nhận diện lại thiết bị
-                var newDevice = await _adb.GetDeviceBySerialAsync(device.Serial);
-                if (newDevice != null)
+                try
                 {
-                    device = newDevice;
-                    Logger.Info($"[ADB] Đã lấy lại kết nối thiết bị {device.Serial}, thử lại bước hiện tại...");
                     await ExecuteStepAsync(step, job, device, ct, variables);
+                    break;
                 }
-                else
+                catch (Exception ex) when (ex.Message.Contains("no device with transport id", StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new InvalidOperationException($"Không thể tìm lại thiết bị {device.Serial} sau khi mất kết nối ADB.", ex);
+                    if (attempt == maxRetries) throw;
+                    Logger.Warn($"[ADB] Thiết bị mất kết nối (transport id thay đổi), đang thử kết nối lại...");
+                    await Task.Delay(2000, ct);
+                    var newDevice = await _adb.GetDeviceBySerialAsync(device.Serial);
+                    if (newDevice != null)
+                    {
+                        device = newDevice;
+                        Logger.Info($"[ADB] Đã lấy lại kết nối thiết bị {device.Serial}, thử lại bước hiện tại...");
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException($"Không thể tìm lại thiết bị {device.Serial} sau khi mất kết nối ADB.", ex);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (ex is FileNotFoundException || ex is InvalidDataException || (ex is InvalidOperationException && ex.Message.Contains("VideoPath")) || ex is UiAutomationNotReadyException || ex is OperationCanceledException)
+                    {
+                        throw;
+                    }
+
+                    if (attempt == maxRetries)
+                    {
+                        throw;
+                    }
+
+                    progress?.Report($"[Lỗi] {ex.Message} - Thử lại ({attempt}/{maxRetries})...");
+                    Logger.Warn($"Job #{job.Id}: Lỗi bước '{step.GetDisplayText()}': {ex.Message}. Đang thử lại lần {attempt}/{maxRetries}...");
+                    await Task.Delay(2000, ct);
                 }
             }
 
@@ -142,8 +164,7 @@ public sealed class WorkflowEngine
             ct.ThrowIfCancellationRequested();
             var job = jobs[i];
             
-            if (targetPlatform == "Shopee" && job.ShopeeStatus == "Đã up Shopee") continue;
-            if (targetPlatform == "Facebook" && job.FbStatus == "Đã up Facebook") continue;
+            if (JobStatus.IsCompleted(job, targetPlatform)) continue;
 
             var recoveryAttempted = false;
             try
@@ -153,14 +174,14 @@ public sealed class WorkflowEngine
                     onJobUpdate?.Invoke(i, "Đang chạy...", "[AI] Đang sinh tiêu đề chuẩn SEO...");
                     await preJobAction(job);
                 }
-                job.Status = "Đang chạy";
+                job.Status = JobStatus.Running;
                 job.Log = string.Empty;
                 onJobUpdate?.Invoke(i, job.Status, string.Empty);
 
                 var progress = new Progress<string>(message =>
                 {
                     job.Log = message;
-                    onJobUpdate?.Invoke(i, "Đang chạy", message);
+                    onJobUpdate?.Invoke(i, JobStatus.Running, message);
                 });
 
                 device = await ExecuteWorkflowAsync(
@@ -171,13 +192,12 @@ public sealed class WorkflowEngine
                     progress,
                     variables,
                     onStepStarted,
-                    skipOpenApp: skipOpenAppAfterFirstJob && hasOpenAppStep && appOpenedInThisRun);
+                    isNotFirstJob: appOpenedInThisRun);
                 if (hasOpenAppStep)
                     appOpenedInThisRun = true;
-                if (targetPlatform == "Facebook") job.FbStatus = "Đã up Facebook";
-                else job.ShopeeStatus = "Đã up Shopee";
-                job.Status = "Thành công";
-                job.Log = DeleteLocalVideosAfterSuccess(steps, jobs, i, job, variables);
+                JobStatus.MarkCompleted(job, targetPlatform);
+                job.Status = JobStatus.Succeeded;
+                job.Log = DeleteLocalVideosAfterSuccess(steps, jobs, i, job, variables, targetPlatform);
                 onJobUpdate?.Invoke(i, job.Status, job.Log);
                 Logger.Info($"Job #{job.Id}: SUCCESS");
 
@@ -190,7 +210,7 @@ public sealed class WorkflowEngine
                     {
                         var delayMs = randomDelayMinutes * 60 * 1000;
                         Logger.Info($"Đang chờ {randomDelayMinutes} phút trước khi chạy video tiếp theo...");
-                        onJobUpdate?.Invoke(i, "Thành công", $"Chờ {randomDelayMinutes} phút...");
+                        onJobUpdate?.Invoke(i, JobStatus.Succeeded, $"Chờ {randomDelayMinutes} phút...");
                         await Task.Delay(delayMs, ct);
                     }
                 }
@@ -198,7 +218,7 @@ public sealed class WorkflowEngine
             catch (UiAutomationNotReadyException ex) when (!recoveryAttempted)
             {
                 recoveryAttempted = true;
-                job.Status = "Đang thử lại";
+                job.Status = JobStatus.Retrying;
                 job.Log = ex.Message;
                 onJobUpdate?.Invoke(i, job.Status, job.Log);
                 Logger.Warn($"Job #{job.Id}: UI Automator not ready, restarting app and retrying once.");
@@ -214,14 +234,14 @@ public sealed class WorkflowEngine
 
                 try
                 {
-                    job.Status = "Đang chạy lại";
+                    job.Status = JobStatus.RunningAgain;
                     job.Log = string.Empty;
                     onJobUpdate?.Invoke(i, job.Status, string.Empty);
 
                     var retryProgress = new Progress<string>(message =>
                     {
                         job.Log = message;
-                        onJobUpdate?.Invoke(i, "Đang chạy lại", message);
+                        onJobUpdate?.Invoke(i, JobStatus.RunningAgain, message);
                     });
 
                     device = await ExecuteWorkflowAsync(
@@ -232,44 +252,62 @@ public sealed class WorkflowEngine
                         retryProgress,
                         variables,
                         onStepStarted,
-                        skipOpenApp: false);
+                        isNotFirstJob: false);
                     if (hasOpenAppStep)
                         appOpenedInThisRun = true;
-                    if (targetPlatform == "Facebook") job.FbStatus = "Đã up Facebook";
-                    else job.ShopeeStatus = "Đã up Shopee";
-                    job.Status = "Thành công";
-                    job.Log = DeleteLocalVideosAfterSuccess(steps, jobs, i, job, variables);
+                    JobStatus.MarkCompleted(job, targetPlatform);
+                    job.Status = JobStatus.Succeeded;
+                    job.Log = DeleteLocalVideosAfterSuccess(steps, jobs, i, job, variables, targetPlatform);
                     onJobUpdate?.Invoke(i, job.Status, job.Log);
                     Logger.Info($"Job #{job.Id}: SUCCESS after recovery");
                 }
                 catch (OperationCanceledException)
                 {
-                    job.Status = "Đã dừng";
+                    job.Status = JobStatus.Stopped;
                     job.Log = "Bị dừng bởi người dùng";
                     onJobUpdate?.Invoke(i, job.Status, job.Log);
                     throw;
                 }
                 catch (Exception retryEx)
                 {
-                    job.Status = "Lỗi";
+                    job.Status = JobStatus.Failed;
                     job.Log = retryEx.Message;
                     onJobUpdate?.Invoke(i, job.Status, retryEx.Message);
                     Logger.Error($"Job #{job.Id}: FAILED after recovery", retryEx);
+
+                    // Thoát app và vào lại khi gặp lỗi để reset trạng thái sạch sẽ
+                    await RestartAppOnFailureAsync(steps, job, variables, device, ct);
+                    appOpenedInThisRun = true;
                 }
             }
             catch (OperationCanceledException)
             {
-                job.Status = "Đã dừng";
+                job.Status = JobStatus.Stopped;
                 job.Log = "Bị dừng bởi người dùng";
                 onJobUpdate?.Invoke(i, job.Status, job.Log);
                 throw;
             }
+            catch (Exception ex) when (ex is FileNotFoundException || ex is InvalidDataException || (ex is InvalidOperationException && ex.Message.Contains("VideoPath")))
+            {
+                job.Status = JobStatus.Failed;
+                job.Log = ex.Message;
+                onJobUpdate?.Invoke(i, job.Status, ex.Message);
+                Logger.Error($"Job #{job.Id}: VIDEO FAILED", ex);
+
+                // Thoát app và vào lại khi gặp lỗi video
+                await RestartAppOnFailureAsync(steps, job, variables, device, ct);
+                appOpenedInThisRun = true;
+            }
             catch (Exception ex)
             {
-                job.Status = "Lỗi";
+                job.Status = JobStatus.Failed;
                 job.Log = ex.Message;
                 onJobUpdate?.Invoke(i, job.Status, ex.Message);
                 Logger.Error($"Job #{job.Id}: FAILED", ex);
+
+                // Thoát app và vào lại khi gặp bất kỳ lỗi nào trong workflow
+                await RestartAppOnFailureAsync(steps, job, variables, device, ct);
+                appOpenedInThisRun = true;
             }
         }
         return device;
@@ -290,37 +328,136 @@ public sealed class WorkflowEngine
                 break;
 
             case StepType.Tap:
-                var tapPoint = step.TapMode switch
+                if (step.TapMode == TapMode.XPath && step.TapMultiMode != TapMultiMode.Single)
                 {
-                    TapMode.XPath => await _adb.FindUiNodeCenterStrictAsync(device, ResolveText(step.TapXPath, job, variables), ct),
-                    TapMode.Image => await _adb.FindImageCenterAsync(
-                        device,
-                        ResolveText(step.TapImagePath, job, variables),
-                        step.TapImageThreshold,
-                        step.TapImageTimeoutMs,
-                        ct),
-                    _ => new Point(step.X, step.Y)
-                };
-                if (tapPoint == null)
-                    throw new InvalidOperationException($"Không tìm thấy mục tiêu chạm ({step.TapMode}).");
-                await _adb.TapAsync(device, tapPoint.Value.X, tapPoint.Value.Y);
+                    var resolvedXpath = ResolveText(step.TapXPath, job, variables);
+                    int targetCount = step.TapMultiMode switch
+                    {
+                        TapMultiMode.ByImageCount => Math.Max(1, ResolveImagePaths(step, job, variables).Count),
+                        TapMultiMode.CustomCount => Math.Max(1, step.TapCustomCount),
+                        _ => -1 // All
+                    };
+
+                    var points = await _adb.FindUiNodesCenterAsync(device, resolvedXpath, targetCount, ct);
+                    if (points == null || points.Count == 0)
+                        throw new InvalidOperationException($"Không tìm thấy phần tử nào theo XPath: {resolvedXpath}");
+
+                    Logger.Info($"[XPATH] Chạm {points.Count} phần tử theo XPath: {resolvedXpath} (chế độ: {step.TapMultiMode})");
+                    for (int i = 0; i < points.Count; i++)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        await _adb.TapAsync(device, points[i].X, points[i].Y);
+                        if (i < points.Count - 1)
+                            await Task.Delay(step.MultiTapDelayMs > 0 ? step.MultiTapDelayMs : 250, ct);
+                    }
+                }
+                else
+                {
+                    var tapPoint = step.TapMode switch
+                    {
+                        TapMode.XPath => await _adb.FindUiNodeCenterStrictAsync(device, ResolveText(step.TapXPath, job, variables), ct),
+                        TapMode.Image => await _adb.FindImageCenterAsync(
+                            device,
+                            ResolveText(step.TapImagePath, job, variables),
+                            step.TapImageThreshold,
+                            step.TapImageTimeoutMs,
+                            ct),
+                        _ => new Point(step.X, step.Y)
+                    };
+                    if (tapPoint == null)
+                        throw new InvalidOperationException($"Không tìm thấy mục tiêu chạm ({step.TapMode}).");
+                    await _adb.TapAsync(device, tapPoint.Value.X, tapPoint.Value.Y);
+                }
+                break;
+
+            case StepType.RandomTap:
+                Point randomPoint;
+                if (step.RandomCoordinates != null && step.RandomCoordinates.Count > 0)
+                {
+                    int chosenIdx = Random.Shared.Next(step.RandomCoordinates.Count);
+                    randomPoint = step.RandomCoordinates[chosenIdx];
+                    Logger.Info($"[CHẠM NGẪU NHIÊN] Job #{job.Id}: Chọn ngẫu nhiên tọa độ ({randomPoint.X}, {randomPoint.Y}) [Điểm {chosenIdx + 1}/{step.RandomCoordinates.Count}]");
+                }
+                else
+                {
+                    randomPoint = new Point(step.X, step.Y);
+                    Logger.Info($"[CHẠM NGẪU NHIÊN] Job #{job.Id}: Nhóm rỗng, sử dụng tọa độ mặc định ({randomPoint.X}, {randomPoint.Y})");
+                }
+                await _adb.TapAsync(device, randomPoint.X, randomPoint.Y);
                 break;
 
             case StepType.InputText:
                 var inputText = ResolveInputText(step, job, variables);
+                if (!step.TakeAllLinks && !string.IsNullOrWhiteSpace(inputText))
+                {
+                    var lines = inputText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (lines.Length > 1 && lines.All(l => l.Trim().StartsWith("http://", StringComparison.OrdinalIgnoreCase) || l.Trim().StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        inputText = lines[0].Trim();
+                    }
+                }
+                var oldTitle = !string.IsNullOrWhiteSpace(inputText)
+                    ? inputText
+                    : (!string.IsNullOrWhiteSpace(job.Title) ? job.Title : (Path.GetFileNameWithoutExtension(job.VideoPath) ?? string.Empty));
+
                 if (string.IsNullOrWhiteSpace(inputText))
-                    throw new InvalidOperationException($"Sản phẩm #{job.Id} không có dữ liệu để nhập cho cột '{step.BindingColumn}'.");
+                {
+                    if (!string.IsNullOrWhiteSpace(oldTitle))
+                    {
+                        inputText = oldTitle;
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException($"Sản phẩm #{job.Id} không có dữ liệu để nhập cho cột '{step.BindingColumn}'.");
+                    }
+                }
                 
                 if (step.UseAiForText)
                 {
-                    var configService = new AiConfigService();
-                    var config = configService.Load();
-                    if (!string.IsNullOrWhiteSpace(config.ApiKey))
+                    if (job.IsAiTitleGenerated)
                     {
-                        var aiService = new AiTitleService();
-                        Logger.Info($"[AI] Đang sinh nội dung bằng AI...");
-                        inputText = await aiService.GenerateTitleAsync(config, inputText);
+                        Logger.Info($"[AI] Video #{job.Id} đã được tạo tiêu đề AI trước đó ('{inputText}'), bỏ qua không gọi AI.");
                     }
+                    else
+                    {
+                        var configService = new AiConfigService();
+                        var config = configService.Load();
+                        if (!string.IsNullOrWhiteSpace(config.ApiKey))
+                        {
+                            var originalTitle = inputText;
+                            var aiService = new AiTitleService();
+                            Logger.Info($"[AI] Đang sinh nội dung bằng AI cho video #{job.Id}...");
+                            try
+                            {
+                                var aiResult = await aiService.GenerateTitleAsync(config, originalTitle);
+                                if (!string.IsNullOrWhiteSpace(aiResult) && !string.Equals(aiResult.Trim(), originalTitle.Trim(), StringComparison.OrdinalIgnoreCase))
+                                {
+                                    inputText = aiResult.Trim();
+                                    job.IsAiTitleGenerated = true;
+                                    Logger.Info($"[AI] Sinh tiêu đề AI thành công: '{inputText}'");
+                                }
+                                else
+                                {
+                                    inputText = !string.IsNullOrWhiteSpace(originalTitle) ? originalTitle : oldTitle;
+                                    Logger.Warn($"[AI] Không sinh được tiêu đề AI mới, tự động dùng tiêu đề cũ: '{inputText}'");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                inputText = !string.IsNullOrWhiteSpace(originalTitle) ? originalTitle : oldTitle;
+                                Logger.Warn($"[AI] Lỗi kết nối API AI ({ex.Message}), tự động dùng tiêu đề cũ: '{inputText}'");
+                            }
+                        }
+                        else
+                        {
+                            Logger.Info($"[AI] Chưa cấu hình API Key, dùng tiêu đề cũ: '{inputText}'");
+                        }
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(inputText))
+                {
+                    inputText = !string.IsNullOrWhiteSpace(oldTitle) ? oldTitle : (job.Title ?? string.Empty);
                 }
 
                 Logger.Info($"[INPUT] Job #{job.Id}: nhập \"{(inputText.Length > 80 ? inputText[..80] + "..." : inputText)}\"");
@@ -351,6 +488,8 @@ public sealed class WorkflowEngine
                     throw new InvalidOperationException($"Sản phẩm #{job.Id} chưa có VideoPath trong danh sách sản phẩm / Excel.");
                 if (!File.Exists(videoPath))
                     throw new FileNotFoundException($"Video không tồn tại: {videoPath}");
+                if (!IsValidVideoFile(videoPath))
+                    throw new InvalidDataException($"File video bị lỗi định dạng hoặc không thể đọc được. Vui lòng kiểm tra lại file gốc: {videoPath}");
                 var fileName = BuildRemoteVideoName(job, Path.GetFileName(videoPath));
                 var remotePath = $"/sdcard/DCIM/Camera/{fileName}";
                 if (step.ClearDeviceVideosBeforeUpload)
@@ -358,6 +497,39 @@ public sealed class WorkflowEngine
                 Logger.Info($"[VIDEO] Job #{job.Id}: đẩy {videoPath} → {remotePath}");
                 await _adb.PushFileAsync(device, videoPath, remotePath);
                 await _adb.TriggerMediaScanAsync(device, remotePath);
+                break;
+
+            case StepType.PushImage:
+                var imagePaths = ResolveImagePaths(step, job, variables);
+                if (imagePaths.Count == 0)
+                    throw new InvalidOperationException($"Sản phẩm #{job.Id} chưa có đường dẫn ảnh (ImagePath / VideoPath) trong danh sách sản phẩm / Excel.");
+
+                foreach (var imgPath in imagePaths)
+                {
+                    if (!File.Exists(imgPath))
+                        throw new FileNotFoundException($"Ảnh không tồn tại: {imgPath}");
+                    if (!IsValidImageFile(imgPath))
+                        throw new InvalidDataException($"File ảnh không đúng định dạng hoặc bị lỗi: {imgPath}");
+                }
+
+                if (step.ClearDeviceVideosBeforeUpload)
+                    await _adb.ClearFlowPilotImagesAsync(device);
+
+                for (int imgIdx = 0; imgIdx < imagePaths.Count; imgIdx++)
+                {
+                    var imgPath = imagePaths[imgIdx];
+                    var imgFileName = BuildRemoteVideoName(job, Path.GetFileName(imgPath));
+                    if (imagePaths.Count > 1)
+                    {
+                        var stem = Path.GetFileNameWithoutExtension(imgFileName);
+                        var ext = Path.GetExtension(imgFileName);
+                        imgFileName = $"{stem}_{imgIdx + 1}{ext}";
+                    }
+                    var imgRemotePath = $"/sdcard/DCIM/Camera/{imgFileName}";
+                    Logger.Info($"[IMAGE] Job #{job.Id}: đẩy {imgPath} → {imgRemotePath}");
+                    await _adb.PushFileAsync(device, imgPath, imgRemotePath);
+                    await _adb.TriggerMediaScanAsync(device, imgRemotePath);
+                }
                 break;
 
             case StepType.Delay:
@@ -430,35 +602,91 @@ public sealed class WorkflowEngine
         IReadOnlyList<JobItem> jobs,
         int currentIndex,
         JobItem currentJob,
-        IReadOnlyList<WorkflowVariable>? variables)
+        IReadOnlyList<WorkflowVariable>? variables,
+        string targetPlatform)
     {
         var deleted = new List<string>();
-        foreach (var step in steps.Where(item => item.Type == StepType.PushVideo && item.DeleteLocalVideoAfterSuccess))
+        foreach (var step in steps.Where(item => (item.Type == StepType.PushVideo || item.Type == StepType.PushImage) && item.DeleteLocalVideoAfterSuccess))
         {
-            var path = ResolveVideoPath(step, currentJob, variables);
-            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) continue;
+            var paths = step.Type == StepType.PushImage
+                ? ResolveImagePaths(step, currentJob, variables)
+                : new List<string> { ResolveVideoPath(step, currentJob, variables) };
 
-            var isUsedByPendingJob = jobs
-                .Skip(currentIndex + 1)
-                .Where(item => item.Status != "Thành công" && item.ShopeeStatus != "Đã up Shopee")
-                .Any(item => string.Equals(ResolveVideoPath(step, item, variables), path, StringComparison.OrdinalIgnoreCase));
-            if (isUsedByPendingJob) continue;
+            foreach (var path in paths)
+            {
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) continue;
 
-            try
-            {
-                File.Delete(path);
-                deleted.Add(Path.GetFileName(path));
-                Logger.Info($"[VIDEO] Đã xóa file nguồn sau khi hoàn tất: {path}");
-            }
-            catch (Exception ex)
-            {
-                Logger.Warn($"[VIDEO] Không thể xóa file nguồn {path}: {ex.Message}");
+                var isUsedByPendingJob = jobs
+                    .Skip(currentIndex + 1)
+                    .Where(item => !JobStatus.IsCompleted(item, targetPlatform))
+                    .Any(item => step.Type == StepType.PushImage
+                        ? ResolveImagePaths(step, item, variables).Contains(path, StringComparer.OrdinalIgnoreCase)
+                        : string.Equals(ResolveVideoPath(step, item, variables), path, StringComparison.OrdinalIgnoreCase));
+                if (isUsedByPendingJob) continue;
+
+                try
+                {
+                    File.Delete(path);
+                    deleted.Add(Path.GetFileName(path));
+                    Logger.Info($"[MEDIA] Đã xóa file nguồn sau khi hoàn tất: {path}");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"[MEDIA] Không thể xóa file nguồn {path}: {ex.Message}");
+                }
             }
         }
 
         return deleted.Count == 0
             ? "Hoàn tất"
             : $"Hoàn tất · Đã xóa {string.Join(", ", deleted)}";
+    }
+
+    private static List<string> ResolveImagePaths(WorkflowStep step, JobItem job, IReadOnlyList<WorkflowVariable>? variables)
+    {
+        var rawPath = step.VideoSource switch
+        {
+            VideoSourceMode.FolderAndExcelFileName => Path.Combine(
+                ResolveText(step.VideoFolderPath, job, variables),
+                Path.GetFileName(job.GetColumnValue(string.IsNullOrWhiteSpace(step.BindingColumn) ? "ImagePath" : step.BindingColumn))),
+            VideoSourceMode.FixedFile => ResolveText(step.VideoFilePath, job, variables),
+            _ => !string.IsNullOrWhiteSpace(step.BindingColumn)
+                ? job.GetColumnValue(step.BindingColumn)
+                : job.GetColumnValue("ImagePath")
+        };
+
+        if (string.IsNullOrWhiteSpace(rawPath))
+            rawPath = job.VideoPath;
+
+        if (string.IsNullOrWhiteSpace(rawPath)) return new List<string>();
+
+        var parts = rawPath.Split(new[] { '\r', '\n', ';', '|' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var result = new List<string>();
+        foreach (var p in parts)
+        {
+            var normalized = NormalizeLocalPath(p.Trim().Trim('"'));
+            if (!string.IsNullOrWhiteSpace(normalized))
+                result.Add(normalized);
+        }
+        return result;
+    }
+
+    private static bool IsValidImageFile(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return false;
+            var ext = Path.GetExtension(path).ToLowerInvariant();
+            var validExts = new[] { ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".gif" };
+            if (!validExts.Contains(ext)) return false;
+
+            var info = new FileInfo(path);
+            return info.Length > 100;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static string ResolveOpenAppPackage(
@@ -473,6 +701,82 @@ public sealed class WorkflowEngine
         return ResolveText(openAppStep.TextValue, job, variables).Trim();
     }
 
+    private async Task RestartAppOnFailureAsync(
+        IReadOnlyList<WorkflowStep> steps,
+        JobItem job,
+        IReadOnlyList<WorkflowVariable>? variables,
+        DeviceData device,
+        CancellationToken ct)
+    {
+        var packageName = ResolveOpenAppPackage(steps, job, variables);
+        if (string.IsNullOrWhiteSpace(packageName))
+            packageName = "com.shopee.vn";
+
+        try
+        {
+            Logger.Warn($"[Tự phục hồi] Video #{job.Id} gặp sự cố! Đang thoát app {packageName} và mở lại để reset trạng thái sạch sẽ...");
+            await _adb.ForceStopAppAsync(device, packageName);
+            await Task.Delay(1000, ct);
+            try { await _adb.SendKeyEventAsync(device, "KEYCODE_HOME"); } catch { }
+            await Task.Delay(1000, ct);
+            await _adb.OpenAppAsync(device, packageName);
+            await Task.Delay(3000, ct);
+            Logger.Info($"[Tự phục hồi] Đã khởi động lại {packageName} thành công, sẵn sàng cho video tiếp theo.");
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"[Tự phục hồi] Không thể khởi động lại app: {ex.Message}");
+        }
+    }
+
+    
+    private static bool IsValidVideoFile(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (info.Length < 1024) return false;
+
+            try
+            {
+                using var process = new System.Diagnostics.Process
+                {
+                    StartInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "ffprobe",
+                        Arguments = $"-v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{path}\"",
+                        RedirectStandardOutput = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    }
+                };
+                process.Start();
+                var output = process.StandardOutput.ReadToEnd().Trim();
+                process.WaitForExit(3000);
+                
+                if (process.ExitCode == 0 && double.TryParse(output, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var duration))
+                {
+                    return duration > 0;
+                }
+                
+                return false;
+            }
+            catch
+            {
+                // Fallback to basic header check if ffprobe is not installed
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                var buffer = new byte[1024];
+                var bytesRead = fs.Read(buffer, 0, buffer.Length);
+                var header = System.Text.Encoding.ASCII.GetString(buffer, 0, bytesRead);
+                return header.Contains("ftyp") || header.Contains("moov") || header.Contains("webm") || header.Contains("matroska");
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static string NormalizeLocalPath(string path)
     {
         var normalized = (path ?? string.Empty).Trim().Trim('"');
@@ -482,12 +786,38 @@ public sealed class WorkflowEngine
         catch (Exception) { return normalized; }
     }
 
-    private static string ResolveText(string template, JobItem job, IReadOnlyList<WorkflowVariable>? variables)
+    private static string ResolveText(
+        string template,
+        JobItem job,
+        IReadOnlyList<WorkflowVariable>? variables,
+        bool takeAllLinks = false)
     {
         if (string.IsNullOrEmpty(template)) return template;
+
+        var links = job.GetShopeeAffLinks();
+        var allLinksNewline = links.Count > 0 ? string.Join("\n", links) : job.ShopeeAffLink;
+        var primaryLink = links.Count > 0 ? links[0] : job.ShopeeAffLink;
+        var chosenLink = takeAllLinks ? allLinksNewline : primaryLink;
+
         var result = template
             .Replace("{Title}", job.Title)
-            .Replace("{ShopeeAffLink}", job.ShopeeAffLink)
+            .Replace("{ShopeeAffLink}", chosenLink)
+            .Replace("{ShopeeAffLinks}", allLinksNewline)
+            .Replace("{ShopeeAffLink_All}", allLinksNewline)
+            .Replace("{ShopeeAffLink_First}", primaryLink)
+            .Replace("{ShopeeAffLink:1}", links.Count > 0 ? links[0] : "")
+            .Replace("{ShopeeAffLink:2}", links.Count > 1 ? links[1] : "")
+            .Replace("{ShopeeAffLink:3}", links.Count > 2 ? links[2] : "")
+            .Replace("{ShopeeAffLink:4}", links.Count > 3 ? links[3] : "")
+            .Replace("{ShopeeAffLink:5}", links.Count > 4 ? links[4] : "")
+            .Replace("{ShopeeAffLink:6}", links.Count > 5 ? links[5] : "")
+            .Replace("{ShopeeAffLink_1}", links.Count > 0 ? links[0] : "")
+            .Replace("{ShopeeAffLink_2}", links.Count > 1 ? links[1] : "")
+            .Replace("{ShopeeAffLink_3}", links.Count > 2 ? links[2] : "")
+            .Replace("{ShopeeAffLink_4}", links.Count > 3 ? links[3] : "")
+            .Replace("{ShopeeAffLink_5}", links.Count > 4 ? links[4] : "")
+            .Replace("{ShopeeAffLink_6}", links.Count > 5 ? links[5] : "")
+            .Replace("{ShopeeAffLinkAll}", allLinksNewline)
             .Replace("{VideoPath}", job.VideoPath)
             .Replace("{Id}", job.Id.ToString());
 
@@ -506,27 +836,28 @@ public sealed class WorkflowEngine
         IReadOnlyList<WorkflowVariable>? variables)
     {
         var input = step.TextValue.Trim();
+        var takeAll = step.TakeAllLinks;
         if (string.IsNullOrWhiteSpace(step.BindingColumn))
         {
             // Cho phép nhập thẳng tên cột: Description hoặc {Description}.
             if (job.HasColumn(input))
-                return job.GetColumnValue(input);
+                return job.GetColumnValue(input, takeAll);
 
-            var resolved = ResolveText(step.TextValue, job, variables);
+            var resolved = ResolveText(step.TextValue, job, variables, takeAll);
             return Regex.Replace(resolved, @"\{([^{}]+)\}", match =>
             {
                 var columnName = match.Groups[1].Value.Trim();
                 return job.HasColumn(columnName)
-                    ? job.GetColumnValue(columnName)
+                    ? job.GetColumnValue(columnName, takeAll)
                     : match.Value;
             });
         }
 
-        var columnValue = job.GetColumnValue(step.BindingColumn);
+        var columnValue = job.GetColumnValue(step.BindingColumn, takeAll);
         if (string.IsNullOrWhiteSpace(step.TextValue))
             return columnValue;
 
-        return ResolveText(step.TextValue, job, variables)
+        return ResolveText(step.TextValue, job, variables, takeAll)
             .Replace("{Value}", columnValue);
     }
 }

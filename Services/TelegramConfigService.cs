@@ -3,32 +3,32 @@ using ShopeeVideoUploader.Models;
 
 namespace ShopeeVideoUploader.Services;
 
-public class AiConfigService
+public class TelegramConfigService
 {
     private readonly string _configPath;
 
-    public AiConfigService()
+    public TelegramConfigService()
     {
         var appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FlowPilot");
         Directory.CreateDirectory(appData);
-        _configPath = Path.Combine(appData, "aiconfig.json");
+        _configPath = Path.Combine(appData, "telegramconfig.json");
     }
 
-    public AiConfig Load()
+    public TelegramConfig Load()
     {
-        if (!File.Exists(_configPath)) return new AiConfig();
+        if (!File.Exists(_configPath)) return new TelegramConfig();
         try
         {
             var json = File.ReadAllText(_configPath);
-            return JsonSerializer.Deserialize<AiConfig>(json) ?? new AiConfig();
+            return JsonSerializer.Deserialize<TelegramConfig>(json) ?? new TelegramConfig();
         }
         catch
         {
-            return new AiConfig();
+            return new TelegramConfig();
         }
     }
 
-    public void Save(AiConfig config)
+    public void Save(TelegramConfig config)
     {
         var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
         var tempPath = _configPath + ".tmp";

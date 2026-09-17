@@ -179,6 +179,126 @@ public class AdbManager : IDisposable
         return null;
     }
 
+    /// <summary>Tìm danh sách tâm các node Android theo XPath trong UI Automator XML, sắp xếp theo thứ tự hiển thị (từ trên xuống dưới, từ trái qua phải).</summary>
+    public async Task<List<Point>> FindUiNodesCenterAsync(
+        DeviceData device,
+        string xpath,
+        int maxCount = -1,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(xpath))
+            throw new InvalidOperationException("Chưa cấu hình XPath cho bước Chạm.");
+
+        const int maxAttempts = 12;
+        const int retryDelayMs = 500;
+        var idleStateFailures = 0;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            await ShellAsync(device, "rm -f /sdcard/flowpilot-ui.xml");
+            var dumpResult = await ShellAsync(device, "uiautomator dump --compressed /sdcard/flowpilot-ui.xml");
+            if (dumpResult.Contains("ERROR", StringComparison.OrdinalIgnoreCase) ||
+                dumpResult.Contains("could not get idle state", StringComparison.OrdinalIgnoreCase))
+            {
+                idleStateFailures++;
+                Logger.Warn($"[ADB] UI dump attempt {attempt + 1}/{maxAttempts} is not ready: {dumpResult}");
+                
+                if (idleStateFailures >= 3)
+                {
+                    throw new UiAutomationNotReadyException(
+                        "UI Automator chưa sẵn sàng sau 3 lần thử (lỗi idle state). Cần thoát app và chạy lại workflow.");
+                }
+
+                if (attempt < maxAttempts - 1)
+                    await Task.Delay(retryDelayMs, ct);
+                continue;
+            }
+
+            var xml = await ShellAsync(device, "cat /sdcard/flowpilot-ui.xml");
+            try
+            {
+                var document = XDocument.Parse(xml);
+                var nodes = document.XPathSelectElements(xpath);
+                var results = new List<(Point Center, int Top, int Left)>();
+
+                foreach (var node in nodes)
+                {
+                    if (string.Equals(node.Attribute("enabled")?.Value, "false", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(node.Attribute("visible-to-user")?.Value, "false", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var bounds = node.Attribute("bounds")?.Value ?? string.Empty;
+                    var match = System.Text.RegularExpressions.Regex.Match(
+                        bounds, @"\[(\d+),(\d+)\]\[(\d+),(\d+)\]");
+                    if (match.Success)
+                    {
+                        var left = int.Parse(match.Groups[1].Value);
+                        var top = int.Parse(match.Groups[2].Value);
+                        var right = int.Parse(match.Groups[3].Value);
+                        var bottom = int.Parse(match.Groups[4].Value);
+                        var center = new Point((left + right) / 2, (top + bottom) / 2);
+                        results.Add((center, top, left));
+                    }
+                }
+
+                if (results.Count > 0)
+                {
+                    // Sắp xếp tự nhiên theo thứ tự đọc: trên xuống dưới (chia dải hàng ~60px), trái qua phải
+                    var sorted = results
+                        .OrderBy(r => r.Top / 60)
+                        .ThenBy(r => r.Left)
+                        .Select(r => r.Center)
+                        .ToList();
+
+                    if (maxCount > 0 && sorted.Count > maxCount)
+                        sorted = sorted.Take(maxCount).ToList();
+
+                    Logger.Info($"[ADB] XPath tìm thấy {sorted.Count} node thỏa mãn: {xpath}");
+                    return sorted;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn($"Không đọc được UI XML lần {attempt + 1}: {ex.Message}");
+            }
+
+            if (attempt < maxAttempts - 1)
+                await Task.Delay(retryDelayMs, ct);
+        }
+
+        Logger.Warn($"[ADB] Không tìm thấy danh sách node theo XPath: {xpath}");
+        return new List<Point>();
+    }
+
+    /// <summary>Lấy toàn bộ cây UI hiện tại dưới dạng XML string.</summary>
+    public async Task<string> DumpUiHierarchyAsync(DeviceData device, CancellationToken ct = default)
+    {
+        const int maxAttempts = 3;
+        const int retryDelayMs = 500;
+        
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            await ShellAsync(device, "rm -f /sdcard/flowpilot-ui.xml");
+            var dumpResult = await ShellAsync(device, "uiautomator dump --compressed /sdcard/flowpilot-ui.xml");
+            
+            if (dumpResult.Contains("ERROR", StringComparison.OrdinalIgnoreCase) ||
+                dumpResult.Contains("could not get idle state", StringComparison.OrdinalIgnoreCase))
+            {
+                Logger.Warn($"[ADB] UI dump attempt {attempt + 1}/{maxAttempts} is not ready: {dumpResult}");
+                if (attempt < maxAttempts - 1) await Task.Delay(retryDelayMs, ct);
+                continue;
+            }
+            
+            var xml = await ShellAsync(device, "cat /sdcard/flowpilot-ui.xml");
+            if (!string.IsNullOrWhiteSpace(xml) && xml.Contains("<hierarchy"))
+                return xml;
+                
+            if (attempt < maxAttempts - 1) await Task.Delay(retryDelayMs, ct);
+        }
+        throw new UiAutomationNotReadyException("Không thể lấy cấu trúc UI từ thiết bị sau nhiều lần thử.");
+    }
+
     /// <summary>Tìm tâm ảnh mẫu trên screenshot Android và retry đến timeout.</summary>
     public async Task<Point?> FindUiNodeCenterStrictAsync(
         DeviceData device,
@@ -289,7 +409,7 @@ public class AdbManager : IDisposable
         return null;
     }
 
-    private async Task<byte[]> CaptureScreenshotPngAsync(DeviceData device, CancellationToken ct)
+    public async Task<byte[]> TakeScreenshotBytesAsync(DeviceData device, CancellationToken ct = default)
     {
         EnsureInit();
         using var process = new Process
@@ -316,6 +436,9 @@ public class AdbManager : IDisposable
             throw new InvalidOperationException("Không chụp được màn hình Android qua ADB.");
         return output.ToArray();
     }
+
+    private Task<byte[]> CaptureScreenshotPngAsync(DeviceData device, CancellationToken ct)
+        => TakeScreenshotBytesAsync(device, ct);
 
     private static Point? FindTemplateCenter(Bitmap screen, Bitmap template, double threshold)
     {
@@ -397,6 +520,7 @@ public class AdbManager : IDisposable
     {
         EnsureInit();
         if (string.IsNullOrEmpty(text)) return;
+        text = text.Replace("\r\n", "\n").Replace('\r', '\n');
         Logger.Info($"[ADB] InputText: \"{(text.Length > 40 ? text[..40] + "..." : text)}\"");
         
         var keyboardPackage = await ShellAsync(device, "pm path com.android.adbkeyboard");
@@ -417,9 +541,21 @@ public class AdbManager : IDisposable
         }
 
         // Fallback: DeviceExtensions.SendTextAsync (chỉ hỗ trợ ASCII)
-        // Thay thế khoảng trắng thành %s để tránh ngắt lệnh ADB shell input text
-        var safeText = text.Replace(" ", "%s");
-        await _client!.SendTextAsync(device, safeText);
+        // Nếu có nhiều dòng (ví dụ nhiều link), gõ từng dòng và gửi phím Enter (66)
+        var lines = text.Split('\n');
+        for (int i = 0; i < lines.Length; i++)
+        {
+            if (i > 0)
+            {
+                await ShellAsync(device, "input keyevent 66");
+                await Task.Delay(150);
+            }
+            if (!string.IsNullOrEmpty(lines[i]))
+            {
+                var safeLine = lines[i].Replace(" ", "%s");
+                await _client!.SendTextAsync(device, safeLine);
+            }
+        }
     }
 
     /// <summary>Push file từ PC vào thiết bị qua SyncService</summary>
@@ -449,6 +585,16 @@ public class AdbManager : IDisposable
         const string command = "rm -f /sdcard/DCIM/Camera/*.mp4 /sdcard/DCIM/Camera/*.mov /sdcard/DCIM/Camera/*.mkv /sdcard/DCIM/Camera/*.avi";
         await ShellAsync(device, command);
         Logger.Info("[VIDEO] Cleared all video(s) from the device.");
+        return 1;
+    }
+
+    /// <summary>Remove only FlowPilot-managed images from the Android upload folder.</summary>
+    public async Task<int> ClearFlowPilotImagesAsync(DeviceData device)
+    {
+        EnsureInit();
+        const string command = "rm -f /sdcard/DCIM/Camera/*.jpg /sdcard/DCIM/Camera/*.jpeg /sdcard/DCIM/Camera/*.png /sdcard/DCIM/Camera/*.webp /sdcard/DCIM/Camera/*.bmp";
+        await ShellAsync(device, command);
+        Logger.Info("[IMAGE] Cleared image(s) from the device.");
         return 1;
     }
 

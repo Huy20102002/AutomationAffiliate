@@ -24,13 +24,14 @@ public class JobItem
     /// <summary>
     /// Trạng thái xử lý: Chờ, Đang chạy, Thành công, Lỗi
     /// </summary>
-    public string Status { get; set; } = "Chờ";
+    public string Status { get; set; } = JobStatus.Waiting;
 
     /// <summary>Trạng thái sản phẩm trên Shopee.</summary>
-    public string ShopeeStatus { get; set; } = "Chưa up Shopee";
+    public string ShopeeStatus { get; set; } = JobStatus.ShopeePending;
+
 
     /// <summary>Trạng thái sản phẩm trên Facebook.</summary>
-    public string FbStatus { get; set; } = "Chưa up Facebook";
+    public string FbStatus { get; set; } = JobStatus.FacebookPending;
 
     /// <summary>Log chi tiết quá trình xử lý</summary>
     public string Log { get; set; } = string.Empty;
@@ -38,12 +39,20 @@ public class JobItem
     /// <summary>Dữ liệu các cột bổ sung được import từ Excel.</summary>
     public Dictionary<string, string> Data { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Đánh dấu video đã được tạo tiêu đề bằng AI (tránh gọi API lặp lại tốn token)</summary>
+    public bool IsAiTitleGenerated
+    {
+        get => Data.TryGetValue("AiTitleGenerated", out var v) && (v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase));
+        set => Data["AiTitleGenerated"] = value ? "1" : "0";
+    }
+
     /// <summary>Dữ liệu JSON dùng để lưu vào CSDL</summary>
     public string DataJson
     {
         get => System.Text.Json.JsonSerializer.Serialize(Data);
         set
         {
+            Data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (string.IsNullOrWhiteSpace(value)) return;
             try
             {
@@ -54,25 +63,73 @@ public class JobItem
         }
     }
 
-    public string GetColumnValue(string columnName)
+    public string GetColumnValue(string columnName, bool takeAllLinks = true)
     {
-        return TryGetColumnValue(columnName, out var value) ? value : string.Empty;
+        return TryGetColumnValue(columnName, out var value, takeAllLinks) ? value : string.Empty;
     }
 
     public bool HasColumn(string columnName)
         => TryGetColumnValue(columnName, out _);
 
-    private bool TryGetColumnValue(string columnName, out string value)
+    public List<string> GetShopeeAffLinks()
+    {
+        if (string.IsNullOrWhiteSpace(ShopeeAffLink)) return [];
+        var parts = ShopeeAffLink.Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
+        var list = new List<string>();
+        foreach (var p in parts)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(p, @"https?://[^\s,;]+");
+            var link = match.Success ? match.Value : p.Trim();
+            if (!string.IsNullOrWhiteSpace(link))
+                list.Add(link);
+        }
+        return list;
+    }
+
+    private bool TryGetColumnValue(string columnName, out string value, bool takeAllLinks = true)
     {
         value = string.Empty;
         if (string.IsNullOrWhiteSpace(columnName)) return false;
 
         var normalized = NormalizeColumnName(columnName);
+        var links = GetShopeeAffLinks();
+
         switch (normalized)
         {
             case "videopath": value = VideoPath; return true;
+            case "imagepath":
+            case "image":
+            case "anh":
+                var customImg = Data.FirstOrDefault(item => NormalizeColumnName(item.Key) == normalized);
+                value = !string.IsNullOrEmpty(customImg.Key) && !string.IsNullOrWhiteSpace(customImg.Value) ? customImg.Value : VideoPath;
+                return true;
             case "title": value = Title; return true;
-            case "shopeeafflink": value = ShopeeAffLink; return true;
+            case "shopeeafflink": 
+                value = links.Count > 0 ? (takeAllLinks ? string.Join("\n", links) : links[0]) : ShopeeAffLink; 
+                return true;
+            case "shopeeafflinkall":
+                value = links.Count > 0 ? string.Join("\n", links) : ShopeeAffLink;
+                return true;
+            case "shopeeafflink_first":
+            case "shopeeafflink1":
+            case "shopeeafflink0":
+                value = links.Count > 0 ? links[0] : "";
+                return true;
+            case "shopeeafflink2":
+                value = links.Count > 1 ? links[1] : "";
+                return true;
+            case "shopeeafflink3":
+                value = links.Count > 2 ? links[2] : "";
+                return true;
+            case "shopeeafflink4":
+                value = links.Count > 3 ? links[3] : "";
+                return true;
+            case "shopeeafflink5":
+                value = links.Count > 4 ? links[4] : "";
+                return true;
+            case "shopeeafflink6":
+                value = links.Count > 5 ? links[5] : "";
+                return true;
             case "status": value = Status; return true;
             case "shopeestatus": value = ShopeeStatus; return true;
             case "fbstatus": value = FbStatus; return true;
