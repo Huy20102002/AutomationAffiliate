@@ -43,6 +43,8 @@ public sealed class ScrcpyMouseCapture
     public sealed record CapturedClick(int X, int Y, string WindowTitle);
     public sealed record CapturedSwipe(int StartX, int StartY, int EndX, int EndY, string WindowTitle);
 
+    public IntPtr EmbeddedScrcpyHwnd { get; set; } = IntPtr.Zero;
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr SetWindowsHookEx(int idHook, MouseHookCallback callback, IntPtr hMod, uint dwThreadId);
 
@@ -97,27 +99,50 @@ public sealed class ScrcpyMouseCapture
                 if (message == (IntPtr)WmLButtonDown)
                 {
                     var mouse = Marshal.PtrToStructure<MouseHookStruct>(data);
-                    var root = GetAncestor(WindowFromPoint(mouse.Point), GaRoot);
-                    var title = ReadWindowTitle(root);
-                    var isFlowPilot = title.Contains("FlowPilot", StringComparison.OrdinalIgnoreCase) ||
-                                      title.Contains("Multi-Platform Studio", StringComparison.OrdinalIgnoreCase);
+                    var directWnd = WindowFromPoint(mouse.Point);
+                    var isEmbedded = EmbeddedScrcpyHwnd != IntPtr.Zero && 
+                        (directWnd == EmbeddedScrcpyHwnd || GetAncestor(directWnd, 1) == EmbeddedScrcpyHwnd || GetAncestor(directWnd, 2) == EmbeddedScrcpyHwnd);
 
-                    if (root != IntPtr.Zero && !isFlowPilot &&
-                        TryMapToDevice(root, mouse.Point, screenWidth, screenHeight, out var point))
+                    if (isEmbedded && TryMapToDevice(EmbeddedScrcpyHwnd, mouse.Point, screenWidth, screenHeight, out var pEmb))
                     {
-                        startPoint = point;
+                        startPoint = pEmb;
+                    }
+                    else
+                    {
+                        var root = GetAncestor(directWnd, GaRoot);
+                        var title = ReadWindowTitle(root);
+                        var isFlowPilot = title.Contains("FlowPilot", StringComparison.OrdinalIgnoreCase) ||
+                                          title.Contains("Multi-Platform Studio", StringComparison.OrdinalIgnoreCase);
+
+                        if (root != IntPtr.Zero && !isFlowPilot &&
+                            TryMapToDevice(root, mouse.Point, screenWidth, screenHeight, out var point))
+                        {
+                            startPoint = point;
+                        }
                     }
                 }
                 else if (message == (IntPtr)WmLButtonUp && startPoint.HasValue)
                 {
                     var mouse = Marshal.PtrToStructure<MouseHookStruct>(data);
-                    var root = GetAncestor(WindowFromPoint(mouse.Point), GaRoot);
-                    var title = ReadWindowTitle(root);
+                    var directWnd = WindowFromPoint(mouse.Point);
+                    var isEmbedded = EmbeddedScrcpyHwnd != IntPtr.Zero && 
+                        (directWnd == EmbeddedScrcpyHwnd || GetAncestor(directWnd, 1) == EmbeddedScrcpyHwnd || GetAncestor(directWnd, 2) == EmbeddedScrcpyHwnd);
 
-                    if (root != IntPtr.Zero && TryMapToDevice(root, mouse.Point, screenWidth, screenHeight, out var endPoint))
+                    if (isEmbedded && TryMapToDevice(EmbeddedScrcpyHwnd, mouse.Point, screenWidth, screenHeight, out var endEmb))
                     {
-                        completion.TrySetResult(new CapturedSwipe(startPoint.Value.X, startPoint.Value.Y, endPoint.X, endPoint.Y, title));
+                        completion.TrySetResult(new CapturedSwipe(startPoint.Value.X, startPoint.Value.Y, endEmb.X, endEmb.Y, "Màn hình nhúng"));
                         startPoint = null;
+                    }
+                    else
+                    {
+                        var root = GetAncestor(directWnd, GaRoot);
+                        var title = ReadWindowTitle(root);
+
+                        if (root != IntPtr.Zero && TryMapToDevice(root, mouse.Point, screenWidth, screenHeight, out var endPoint))
+                        {
+                            completion.TrySetResult(new CapturedSwipe(startPoint.Value.X, startPoint.Value.Y, endPoint.X, endPoint.Y, title));
+                            startPoint = null;
+                        }
                     }
                 }
             }
@@ -163,16 +188,26 @@ public sealed class ScrcpyMouseCapture
             if (code >= 0 && message == (IntPtr)WmLButtonDown)
             {
                 var mouse = Marshal.PtrToStructure<MouseHookStruct>(data);
-                var root = GetAncestor(WindowFromPoint(mouse.Point), GaRoot);
-                var title = ReadWindowTitle(root);
-                var isFlowPilot = title.Contains("FlowPilot", StringComparison.OrdinalIgnoreCase) ||
-                                  title.Contains("Multi-Platform Studio", StringComparison.OrdinalIgnoreCase);
-                // Một số bản scrcpy không đặt MainWindowTitle hoặc đặt title rỗng.
-                // Khi người dùng đã chủ động bật chế độ lấy tọa độ, chỉ cần loại trừ cửa sổ FlowPilot.
-                if (root != IntPtr.Zero && !isFlowPilot &&
-                    TryMapToDevice(root, mouse.Point, screenWidth, screenHeight, out var point))
+                var directWnd = WindowFromPoint(mouse.Point);
+                var isEmbedded = EmbeddedScrcpyHwnd != IntPtr.Zero && 
+                    (directWnd == EmbeddedScrcpyHwnd || GetAncestor(directWnd, 1) == EmbeddedScrcpyHwnd || GetAncestor(directWnd, 2) == EmbeddedScrcpyHwnd);
+
+                if (isEmbedded && TryMapToDevice(EmbeddedScrcpyHwnd, mouse.Point, screenWidth, screenHeight, out var pEmb))
                 {
-                    completion.TrySetResult(new CapturedClick(point.X, point.Y, title));
+                    completion.TrySetResult(new CapturedClick(pEmb.X, pEmb.Y, "Màn hình nhúng"));
+                }
+                else
+                {
+                    var root = GetAncestor(directWnd, GaRoot);
+                    var title = ReadWindowTitle(root);
+                    var isFlowPilot = title.Contains("FlowPilot", StringComparison.OrdinalIgnoreCase) ||
+                                      title.Contains("Multi-Platform Studio", StringComparison.OrdinalIgnoreCase);
+
+                    if (root != IntPtr.Zero && !isFlowPilot &&
+                        TryMapToDevice(root, mouse.Point, screenWidth, screenHeight, out var point))
+                    {
+                        completion.TrySetResult(new CapturedClick(point.X, point.Y, title));
+                    }
                 }
             }
 

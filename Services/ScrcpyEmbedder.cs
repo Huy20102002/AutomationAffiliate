@@ -20,9 +20,13 @@ public class ScrcpyEmbedder : IDisposable
     private IntPtr _scrcpyHwnd = IntPtr.Zero;
     private Panel? _hostPanel;
     private string _windowTitle = string.Empty;
+    private string _deviceSerial = string.Empty;
     private System.Windows.Forms.Timer? _resizeTimer;
 
-    public bool IsRunning => _scrcpyProcess != null && !_scrcpyProcess.HasExited;
+    public bool IsRunning => _scrcpyProcess != null && !_scrcpyProcess.HasExited && _scrcpyHwnd != IntPtr.Zero;
+    public IntPtr Hwnd => _scrcpyHwnd;
+    public string DeviceSerial => _deviceSerial;
+    public Panel? HostPanel => _hostPanel;
 
     /// <summary>
     /// Khởi chạy scrcpy và nhúng vào Panel.
@@ -32,6 +36,7 @@ public class ScrcpyEmbedder : IDisposable
         try
         {
             _hostPanel = hostPanel;
+            _deviceSerial = deviceSerial;
             _windowTitle = $"SCRCPY_{deviceSerial}";
 
             // Kill process cũ nếu có
@@ -53,21 +58,27 @@ public class ScrcpyEmbedder : IDisposable
             }
 
             Logger.Info($"Scrcpy path: {exePath}");
+            var scrcpyDir = Path.GetDirectoryName(exePath) ?? AppDomain.CurrentDomain.BaseDirectory;
 
-            // Khởi chạy scrcpy process
-            var args = $"--serial={deviceSerial} --window-title=\"{_windowTitle}\" --window-borderless --no-audio --stay-awake --keyboard=uhid";
+            // Tính toán kích thước ban đầu theo kích thước hostPanel
+            int initWidth = _hostPanel.Width > 50 ? _hostPanel.Width : 250;
+            int initHeight = _hostPanel.Height > 50 ? _hostPanel.Height : 528;
+
+            // Khởi chạy scrcpy process với --window-width và --window-height để khởi tạo Direct3D swapchain đúng ngay từ đầu
+            var args = $"--serial={deviceSerial} --window-title=\"{_windowTitle}\" --window-width={initWidth} --window-height={initHeight} --window-borderless --no-audio --stay-awake --max-fps=30";
             _scrcpyProcess = new Process
             {
                 StartInfo = new ProcessStartInfo
                 {
                     FileName = exePath,
                     Arguments = args,
+                    WorkingDirectory = scrcpyDir,
                     UseShellExecute = false,
                     CreateNoWindow = false
                 }
             };
             _scrcpyProcess.Start();
-            Logger.Info($"Scrcpy started (PID: {_scrcpyProcess.Id})");
+            Logger.Info($"Scrcpy started (PID: {_scrcpyProcess.Id}) với kích thước ban đầu {initWidth}x{initHeight}");
 
             // Chờ cửa sổ scrcpy xuất hiện (retry tối đa 30 lần x 200ms = 6s)
             _scrcpyHwnd = IntPtr.Zero;
@@ -99,14 +110,14 @@ public class ScrcpyEmbedder : IDisposable
             // Bước 2: Thay đổi Window Style
             // - Xóa WS_POPUP (cửa sổ popup độc lập)
             // - Xóa WS_CAPTION (title bar)
-            // - Xóa WS_THICKFRAME (viền resize)
-            // - Thêm WS_CHILD (child window)
-            // - Thêm WS_VISIBLE (hiển thị)
+            // - QUAN TRỌNG: Giữ lại WS_THICKFRAME để SDL2 Direct3D11 swapchain nhận diện window resizable và tự động scale chuẩn
+            // - Thêm WS_CHILD (child window), WS_VISIBLE, WS_CLIPCHILDREN, WS_CLIPSIBLINGS
             int style = NativeMethods.GetWindowLong(_scrcpyHwnd, NativeMethods.GWL_STYLE);
             style &= ~(NativeMethods.WS_POPUP | NativeMethods.WS_CAPTION |
-                        NativeMethods.WS_THICKFRAME | NativeMethods.WS_MAXIMIZEBOX |
-                        NativeMethods.WS_MINIMIZEBOX | NativeMethods.WS_SYSMENU);
-            style |= NativeMethods.WS_CHILD | NativeMethods.WS_VISIBLE;
+                        NativeMethods.WS_MAXIMIZEBOX | NativeMethods.WS_MINIMIZEBOX | NativeMethods.WS_SYSMENU);
+            style |= NativeMethods.WS_CHILD | NativeMethods.WS_VISIBLE |
+                     NativeMethods.WS_CLIPCHILDREN | NativeMethods.WS_CLIPSIBLINGS |
+                     NativeMethods.WS_THICKFRAME;
             NativeMethods.SetWindowLong(_scrcpyHwnd, NativeMethods.GWL_STYLE, style);
 
             // Bước 3: Resize khớp khít Panel
@@ -130,14 +141,22 @@ public class ScrcpyEmbedder : IDisposable
             // Hook resize event
             _hostPanel.SizeChanged += HostPanel_SizeChanged;
 
-            // Khởi tạo timer để liên tục ép scrcpy vừa Panel
-            // (vì scrcpy tự động resize lại cửa sổ của nó khi nhận được frame video đầu tiên)
-            _resizeTimer = new System.Windows.Forms.Timer { Interval = 500 };
+            // Timer kiểm tra định kỳ trong trường hợp cửa sổ scrcpy bị lệch kích thước
+            _resizeTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             _resizeTimer.Tick += (s, e) =>
             {
-                if (_scrcpyHwnd != IntPtr.Zero && _hostPanel != null)
+                if (_scrcpyHwnd != IntPtr.Zero && _hostPanel != null && _hostPanel.Width > 0 && _hostPanel.Height > 0)
                 {
-                    NativeMethods.MoveWindow(_scrcpyHwnd, 0, 0, _hostPanel.Width, _hostPanel.Height, true);
+                    if (NativeMethods.GetClientRect(_scrcpyHwnd, out var rc))
+                    {
+                        if (rc.Right - rc.Left != _hostPanel.Width || rc.Bottom - rc.Top != _hostPanel.Height)
+                        {
+                            NativeMethods.MoveWindow(_scrcpyHwnd, 0, 0, _hostPanel.Width, _hostPanel.Height, true);
+                            NativeMethods.SetWindowPos(_scrcpyHwnd, IntPtr.Zero, 0, 0,
+                                _hostPanel.Width, _hostPanel.Height,
+                                NativeMethods.SWP_NOZORDER | NativeMethods.SWP_FRAMECHANGED);
+                        }
+                    }
                 }
             };
             _resizeTimer.Start();
@@ -154,8 +173,47 @@ public class ScrcpyEmbedder : IDisposable
 
     private void HostPanel_SizeChanged(object? sender, EventArgs e)
     {
-        if (_scrcpyHwnd != IntPtr.Zero && _hostPanel != null)
+        if (_scrcpyHwnd != IntPtr.Zero && _hostPanel != null && _hostPanel.Width > 0 && _hostPanel.Height > 0)
+        {
             NativeMethods.MoveWindow(_scrcpyHwnd, 0, 0, _hostPanel.Width, _hostPanel.Height, true);
+            NativeMethods.SetWindowPos(_scrcpyHwnd, IntPtr.Zero, 0, 0,
+                _hostPanel.Width, _hostPanel.Height,
+                NativeMethods.SWP_NOZORDER | NativeMethods.SWP_FRAMECHANGED);
+        }
+    }
+
+    /// <summary>
+    /// Chuyển đổi cửa sổ scrcpy đang chạy sang một Panel mới mà không cần khởi động lại tiến trình.
+    /// </summary>
+    public bool Reparent(Panel newHostPanel)
+    {
+        if (_scrcpyHwnd == IntPtr.Zero || _scrcpyProcess == null || _scrcpyProcess.HasExited)
+            return false;
+
+        try
+        {
+            if (_hostPanel != null)
+                _hostPanel.SizeChanged -= HostPanel_SizeChanged;
+
+            _hostPanel = newHostPanel;
+            _hostPanel.SizeChanged += HostPanel_SizeChanged;
+
+            NativeMethods.SetParent(_scrcpyHwnd, _hostPanel.Handle);
+            if (_hostPanel.Width > 0 && _hostPanel.Height > 0)
+            {
+                NativeMethods.MoveWindow(_scrcpyHwnd, 0, 0, _hostPanel.Width, _hostPanel.Height, true);
+                NativeMethods.SetWindowPos(_scrcpyHwnd, IntPtr.Zero, 0, 0,
+                    _hostPanel.Width, _hostPanel.Height,
+                    NativeMethods.SWP_NOZORDER | NativeMethods.SWP_FRAMECHANGED);
+            }
+            NativeMethods.ShowWindow(_scrcpyHwnd, NativeMethods.SW_SHOW);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Lỗi reparent scrcpy", ex);
+            return false;
+        }
     }
 
     public void Stop()

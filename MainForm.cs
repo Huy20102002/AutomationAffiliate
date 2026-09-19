@@ -19,6 +19,7 @@ public partial class MainForm : Form
     private readonly AdbManager _adb = new();
     private readonly AdbActionRecorder _actionRecorder;
     private readonly ScrcpyMouseCapture _scrcpyMouseCapture = new();
+    private readonly ScrcpyEmbedder _scrcpyEmbedder = new();
     private WorkflowEngine? _engine;
     private readonly List<WorkflowStep> _androidSteps = [];
     private readonly List<WorkflowStep> _iosSteps = [];
@@ -257,7 +258,48 @@ public partial class MainForm : Form
         navWorkflow.Click += (_, _) => ShowWorkflowView();
         navWorkflowIos.Click += (_, _) => ShowIosWorkflowView();
         navProducts.Click += (_, _) => ShowProductView();
+        navDevices.Click += (_, _) => ShowDevicesView();
         if (_navTikTok != null) _navTikTok.Click += (_, _) => ShowTikTokDownloaderView();
+
+        btnToggleWorkflowPhone.Click += async (_, _) => await ToggleWorkflowPhoneScreenAsync();
+        btnWfPhoneClose.Click += (_, _) => CloseWorkflowPhoneScreen();
+        btnWfPhoneHome.Click += async (_, _) => await SendAdbKeyAsync("3");
+        btnWfPhoneBack.Click += async (_, _) => await SendAdbKeyAsync("4");
+        btnWfPhonePower.Click += async (_, _) => await SendAdbKeyAsync("26");
+        btnWfPhoneRestart.Click += async (_, _) => await RestartScrcpyAsync(pnlWorkflowScrcpyHost);
+
+        btnDevPhoneHome.Click += async (_, _) => await SendAdbKeyAsync("3");
+        btnDevPhoneBack.Click += async (_, _) => await SendAdbKeyAsync("4");
+        btnDevPhonePower.Click += async (_, _) => await SendAdbKeyAsync("26");
+        btnDevPhoneRecents.Click += async (_, _) => await SendAdbKeyAsync("187");
+        btnDevPhoneVolUp.Click += async (_, _) => await SendAdbKeyAsync("24");
+        btnDevPhoneVolDown.Click += async (_, _) => await SendAdbKeyAsync("25");
+        btnDevPhoneScreenshot.Click += async (_, _) => await TakeDeviceScreenshotAsync();
+        btnDevicesStartScrcpy.Click += async (_, _) => await EnsureScrcpyRunningAsync(pnlDevicesScrcpyHost);
+        btnDevicesStopScrcpy.Click += (_, _) => StopScrcpy();
+
+        btnOpenShopee.Click += async (_, _) => await LaunchAppAsync("com.shopee.vn");
+        btnOpenTikTok.Click += async (_, _) => await LaunchAppAsync("com.ss.android.ugc.trill");
+        btnOpenFacebook.Click += async (_, _) => await LaunchAppAsync("com.facebook.katana");
+        btnOpenSettings.Click += async (_, _) => await LaunchAppAsync("com.android.settings");
+        btnMediaScan.Click += async (_, _) => await HandleOverviewDeviceToolAsync("mediascan");
+        btnRestartAdb.Click += async (_, _) => await HandleOverviewDeviceToolAsync("restart_adb");
+        btnWifiConnect.Click += async (_, _) => await ConnectWifiAdbAsync();
+
+        upperWorkflowLayout.Resize += (_, _) =>
+        {
+            if (panelWorkflowPhone != null && panelWorkflowPhone.Visible)
+            {
+                var availH = Math.Max(350, upperWorkflowLayout.ClientSize.Height - 40);
+                var ratio = GetDeviceAspectRatio();
+                var targetColW = Math.Clamp((int)Math.Round(availH * ratio) + 16, 220, 450);
+                if (Math.Abs(upperWorkflowLayout.ColumnStyles[1].Width - targetColW) > 3)
+                {
+                    upperWorkflowLayout.ColumnStyles[1].Width = targetColW;
+                }
+                LayoutWorkflowPhone();
+            }
+        };
         _overviewControl.RunRequested += async (_, _) => await StartRunAsync();
         _overviewControl.ImportRequested += (_, _) => ImportExcel();
         _overviewControl.CampaignsRequested += (_, _) => ShowFolderManager();
@@ -736,11 +778,22 @@ public partial class MainForm : Form
         await UpdateDeviceVariablesAsync(info);
         SetStatus($"Đã kết nối: {info.Model}");
         RefreshOverviewDashboard();
+        UpdateDevicesViewLabels();
+
+        if (panelWorkflowPhone != null && panelWorkflowPhone.Visible)
+        {
+            _ = EnsureScrcpyRunningAsync(pnlWorkflowScrcpyHost);
+        }
+        else if (_activeView == panelDevicesView)
+        {
+            _ = EnsureScrcpyRunningAsync(pnlDevicesScrcpyHost);
+        }
     }
 
     private void DisconnectDevice()
     {
         StopRecording();
+        StopScrcpy();
         _currentDevice = null;
         _currentDeviceInfo = null;
         btnConnect.Enabled = true;
@@ -756,6 +809,7 @@ public partial class MainForm : Form
         RefreshVariableList();
         SetStatus("Đã ngắt kết nối");
         RefreshOverviewDashboard();
+        UpdateDevicesViewLabels();
     }
 
     private async Task UpdateDeviceVariablesAsync(DeviceInfo info)
@@ -791,6 +845,12 @@ public partial class MainForm : Form
 
         SetDeviceVariable("ScreenWidth", width);
         SetDeviceVariable("ScreenHeight", height);
+        if (width != "0" && height != "0" && lblDeviceInfoRes != null)
+        {
+            lblDeviceInfoRes.Text = $"Độ phân giải: {width} x {height}";
+            LayoutWorkflowPhone();
+            LayoutDevicesPhone();
+        }
         RefreshVariableList();
     }
 
@@ -3596,6 +3656,13 @@ public partial class MainForm : Form
         RefreshWorkflow();
         LoadStepConfig(-1);
         lblStatus.Text = "Đã chuyển sang Sơ đồ quy trình";
+
+        if (panelWorkflowPhone != null && panelWorkflowPhone.Visible && _scrcpyEmbedder.IsRunning && _currentDevice != null)
+        {
+            LayoutWorkflowPhone();
+            _scrcpyEmbedder.Reparent(pnlWorkflowScrcpyHost);
+            _scrcpyMouseCapture.EmbeddedScrcpyHwnd = _scrcpyEmbedder.Hwnd;
+        }
     }
 
     private Label? _iosPlaceholderLabel;
@@ -3704,6 +3771,339 @@ public partial class MainForm : Form
         ShowAnimatedView(_settingsControl);
         if (_navSettings != null) SetActiveNavButton(_navSettings);
         SetStatus("Cấu hình hệ thống FlowPilot");
+    }
+
+    private double GetDeviceAspectRatio()
+    {
+        var wVar = _variables.FirstOrDefault(v => v.Name.Equals("ScreenWidth", StringComparison.OrdinalIgnoreCase));
+        var hVar = _variables.FirstOrDefault(v => v.Name.Equals("ScreenHeight", StringComparison.OrdinalIgnoreCase));
+        if (wVar != null && hVar != null &&
+            double.TryParse(wVar.Value, out var w) && double.TryParse(hVar.Value, out var h) &&
+            w > 0 && h > 0)
+        {
+            return w / h;
+        }
+        return 1080.0 / 2280.0; // Tỷ lệ chuẩn Note 10 / điện thoại Android hiện đại (~0.4737)
+    }
+
+    private void LayoutWorkflowPhone()
+    {
+        if (panelWorkflowPhone == null || pnlWorkflowScrcpyHost == null || topBarWorkflowPhone == null) return;
+        if (!panelWorkflowPhone.Visible) return;
+
+        var totalH = panelWorkflowPhone.ClientSize.Height;
+        var top = topBarWorkflowPhone.Height + 2;
+        var availH = totalH - top - 6;
+        if (availH <= 40) return;
+
+        var ratio = GetDeviceAspectRatio();
+        var fitW = (int)Math.Round(availH * ratio);
+        var maxW = Math.Max(10, panelWorkflowPhone.ClientSize.Width - 8);
+
+        int finalW, finalH;
+        if (fitW <= maxW)
+        {
+            finalW = fitW;
+            finalH = availH;
+        }
+        else
+        {
+            finalW = maxW;
+            finalH = (int)Math.Round(maxW / ratio);
+        }
+
+        int x = Math.Max(0, (panelWorkflowPhone.ClientSize.Width - finalW) / 2);
+        int y = top + Math.Max(0, (availH - finalH) / 2);
+
+        pnlWorkflowScrcpyHost.SetBounds(x, y, finalW, finalH);
+
+        if (_scrcpyEmbedder.IsRunning && _scrcpyEmbedder.HostPanel == pnlWorkflowScrcpyHost && _scrcpyEmbedder.Hwnd != IntPtr.Zero)
+        {
+            NativeMethods.MoveWindow(_scrcpyEmbedder.Hwnd, 0, 0, finalW, finalH, true);
+            NativeMethods.SetWindowPos(_scrcpyEmbedder.Hwnd, IntPtr.Zero, 0, 0, finalW, finalH,
+                NativeMethods.SWP_NOZORDER | NativeMethods.SWP_FRAMECHANGED);
+        }
+    }
+
+    private void LayoutDevicesPhone()
+    {
+        if (phoneCardDevices == null || pnlDevicesScrcpyHost == null || phoneToolBarDevices == null || phoneBottomBarDevices == null) return;
+        if (!panelDevicesView.Visible) return;
+
+        var totalH = phoneCardDevices.ClientSize.Height;
+        var top = phoneToolBarDevices.Bottom + 4;
+        var bottom = phoneBottomBarDevices.Height + 8;
+        var availH = totalH - top - bottom;
+        if (availH <= 40) return;
+
+        var ratio = GetDeviceAspectRatio();
+        var fitW = (int)Math.Round(availH * ratio);
+        var maxW = Math.Max(10, phoneCardDevices.ClientSize.Width - 12);
+
+        int finalW, finalH;
+        if (fitW <= maxW)
+        {
+            finalW = fitW;
+            finalH = availH;
+        }
+        else
+        {
+            finalW = maxW;
+            finalH = (int)Math.Round(maxW / ratio);
+        }
+
+        int x = Math.Max(0, (phoneCardDevices.ClientSize.Width - finalW) / 2);
+        int y = top + Math.Max(0, (availH - finalH) / 2);
+
+        pnlDevicesScrcpyHost.SetBounds(x, y, finalW, finalH);
+
+        if (_scrcpyEmbedder.IsRunning && _scrcpyEmbedder.HostPanel == pnlDevicesScrcpyHost && _scrcpyEmbedder.Hwnd != IntPtr.Zero)
+        {
+            NativeMethods.MoveWindow(_scrcpyEmbedder.Hwnd, 0, 0, finalW, finalH, true);
+            NativeMethods.SetWindowPos(_scrcpyEmbedder.Hwnd, IntPtr.Zero, 0, 0, finalW, finalH,
+                NativeMethods.SWP_NOZORDER | NativeMethods.SWP_FRAMECHANGED);
+        }
+    }
+
+    private void ShowDevicesView()
+    {
+        _iosPlaceholderLabel?.Hide();
+        ShowAnimatedView(panelDevicesView);
+        SetActiveNavButton(navDevices);
+        UpdateDevicesViewLabels();
+        SetStatus("Quản lý thiết bị & Màn hình trực tiếp");
+
+        LayoutDevicesPhone();
+
+        if (_scrcpyEmbedder.IsRunning && _currentDevice != null)
+        {
+            _scrcpyEmbedder.Reparent(pnlDevicesScrcpyHost);
+            _scrcpyMouseCapture.EmbeddedScrcpyHwnd = _scrcpyEmbedder.Hwnd;
+        }
+        else if (_currentDevice != null)
+        {
+            _ = EnsureScrcpyRunningAsync(pnlDevicesScrcpyHost);
+        }
+    }
+
+    private async Task ToggleWorkflowPhoneScreenAsync()
+    {
+        if (panelWorkflowPhone.Visible)
+        {
+            CloseWorkflowPhoneScreen();
+        }
+        else
+        {
+            upperWorkflowLayout.SuspendLayout();
+            var availH = Math.Max(350, upperWorkflowLayout.ClientSize.Height - 40);
+            var ratio = GetDeviceAspectRatio();
+            var targetColW = Math.Clamp((int)Math.Round(availH * ratio) + 16, 220, 450);
+
+            upperWorkflowLayout.ColumnStyles[1].SizeType = SizeType.Absolute;
+            upperWorkflowLayout.ColumnStyles[1].Width = targetColW;
+            panelWorkflowPhone.Visible = true;
+            upperWorkflowLayout.ResumeLayout(true);
+
+            LayoutWorkflowPhone();
+
+            if (_currentDevice != null)
+            {
+                await EnsureScrcpyRunningAsync(pnlWorkflowScrcpyHost);
+            }
+            else
+            {
+                SetStatus("Mẹo: Kết nối thiết bị để xem màn hình điện thoại trực tiếp.");
+            }
+        }
+    }
+
+    private void CloseWorkflowPhoneScreen()
+    {
+        upperWorkflowLayout.SuspendLayout();
+        upperWorkflowLayout.ColumnStyles[1].SizeType = SizeType.Absolute;
+        upperWorkflowLayout.ColumnStyles[1].Width = 0F;
+        panelWorkflowPhone.Visible = false;
+        upperWorkflowLayout.ResumeLayout(true);
+
+        if (_activeView == panelDevicesView && _scrcpyEmbedder.IsRunning && _currentDevice != null)
+        {
+            _scrcpyEmbedder.Reparent(pnlDevicesScrcpyHost);
+            _scrcpyMouseCapture.EmbeddedScrcpyHwnd = _scrcpyEmbedder.Hwnd;
+        }
+    }
+
+    private async Task EnsureScrcpyRunningAsync(Panel targetPanel)
+    {
+        if (_currentDevice == null)
+        {
+            lblDevicesPhoneStatus.Text = "Chưa kết nối thiết bị";
+            return;
+        }
+
+        if (_scrcpyEmbedder.IsRunning)
+        {
+            if (_scrcpyEmbedder.HostPanel != targetPanel)
+            {
+                _scrcpyEmbedder.Reparent(targetPanel);
+                _scrcpyMouseCapture.EmbeddedScrcpyHwnd = _scrcpyEmbedder.Hwnd;
+            }
+            lblDevicesPhoneStatus.Text = "Đang truyền phát";
+            return;
+        }
+
+        lblDevicesPhoneStatus.Text = "Đang khởi động scrcpy...";
+        var success = await _scrcpyEmbedder.StartAsync(_currentDevice.Serial, targetPanel);
+        if (success)
+        {
+            _scrcpyMouseCapture.EmbeddedScrcpyHwnd = _scrcpyEmbedder.Hwnd;
+            lblDevicesPhoneStatus.Text = "Đang truyền phát";
+        }
+        else
+        {
+            lblDevicesPhoneStatus.Text = "Khởi chạy thất bại";
+        }
+    }
+
+    private async Task RestartScrcpyAsync(Panel targetPanel)
+    {
+        if (_currentDevice == null) return;
+        StopScrcpy();
+        await Task.Delay(500);
+        await EnsureScrcpyRunningAsync(targetPanel);
+    }
+
+    private void StopScrcpy()
+    {
+        _scrcpyEmbedder.Stop();
+        _scrcpyMouseCapture.EmbeddedScrcpyHwnd = IntPtr.Zero;
+        lblDevicesPhoneStatus.Text = "Đã dừng truyền phát";
+    }
+
+    private void UpdateDevicesViewLabels()
+    {
+        if (_currentDevice != null && _currentDeviceInfo != null)
+        {
+            lblDevicesPhoneTitle.Text = $"📱 {_currentDeviceInfo.Model} ({_currentDeviceInfo.Serial})";
+            lblDeviceInfoModel.Text = $"Tên máy: {_currentDeviceInfo.Model}";
+            lblDeviceInfoSerial.Text = $"Serial / IP: {_currentDeviceInfo.Serial}";
+            lblDeviceInfoAndroid.Text = $"HĐH: Android {_currentDeviceInfo.AndroidVersion}";
+            lblDeviceInfoStatus.Text = $"Trạng thái: {_currentDevice.State}";
+        }
+        else if (_currentDevice != null)
+        {
+            lblDevicesPhoneTitle.Text = $"📱 {_currentDevice.Model} ({_currentDevice.Serial})";
+            lblDeviceInfoModel.Text = $"Tên máy: {_currentDevice.Model}";
+            lblDeviceInfoSerial.Text = $"Serial / IP: {_currentDevice.Serial}";
+            lblDeviceInfoAndroid.Text = "HĐH: Android";
+            lblDeviceInfoStatus.Text = $"Trạng thái: {_currentDevice.State}";
+        }
+        else
+        {
+            lblDevicesPhoneTitle.Text = "📱 Màn hình điện thoại";
+            lblDeviceInfoModel.Text = "Tên máy: Chưa kết nối";
+            lblDeviceInfoSerial.Text = "Serial: Chưa kết nối";
+            lblDeviceInfoRes.Text = "Độ phân giải: -";
+            lblDeviceInfoAndroid.Text = "HĐH: Android";
+            lblDeviceInfoStatus.Text = "Trạng thái: Offline";
+            lblDevicesPhoneStatus.Text = "Chưa kết nối thiết bị";
+        }
+    }
+
+    private async Task SendAdbKeyAsync(string keyCode)
+    {
+        if (_currentDevice == null)
+        {
+            ShowError("Chưa kết nối thiết bị Android.");
+            return;
+        }
+
+        try
+        {
+            await _adb.SendKeyEventAsync(_currentDevice, keyCode);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Lỗi gửi phím ADB {keyCode}", ex);
+        }
+    }
+
+    private async Task LaunchAppAsync(string packageName)
+    {
+        if (_currentDevice == null)
+        {
+            ShowError("Chưa kết nối thiết bị Android.");
+            return;
+        }
+
+        try
+        {
+            SetStatus($"Đang mở ứng dụng: {packageName}...");
+            await _adb.OpenAppAsync(_currentDevice, packageName);
+            SetStatus($"Đã mở ứng dụng: {packageName}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Lỗi mở app {packageName}", ex);
+            ShowError($"Không thể mở ứng dụng: {ex.Message}");
+        }
+    }
+
+    private async Task TakeDeviceScreenshotAsync()
+    {
+        if (_currentDevice == null)
+        {
+            ShowError("Chưa kết nối thiết bị Android.");
+            return;
+        }
+
+        try
+        {
+            SetStatus("Đang chụp ảnh màn hình...");
+            var bytes = await _adb.TakeScreenshotBytesAsync(_currentDevice);
+            var dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Screenshots");
+            Directory.CreateDirectory(dir);
+            var file = Path.Combine(dir, $"screenshot_{DateTime.Now:yyyyMMdd_HHmmss}.png");
+            await File.WriteAllBytesAsync(file, bytes);
+
+            using var ms = new MemoryStream(bytes);
+            using var bmp = new Bitmap(ms);
+            Clipboard.SetImage((Image)bmp.Clone());
+
+            SetStatus($"Đã lưu ảnh màn hình: {Path.GetFileName(file)} (Đã copy clipboard)");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Lỗi chụp ảnh màn hình", ex);
+            ShowError($"Chụp ảnh màn hình thất bại: {ex.Message}");
+        }
+    }
+
+    private async Task ConnectWifiAdbAsync()
+    {
+        var endpoint = txtWifiConnectIp?.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            ShowError("Vui lòng nhập địa chỉ IP:Cổng (VD: 192.168.1.50:5555 hoặc 192.168.100.73:35029)");
+            return;
+        }
+
+        try
+        {
+            SetStatus($"Đang kết nối Wi-Fi ADB tới {endpoint}...");
+            if (btnWifiConnect != null) btnWifiConnect.Enabled = false;
+            var result = await _adb.ConnectWirelessAsync(endpoint);
+            SetStatus($"Kết quả kết nối: {result}");
+            await RefreshDevicesAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Lỗi kết nối Wi-Fi ADB", ex);
+            ShowError($"Kết nối thất bại: {ex.Message}");
+        }
+        finally
+        {
+            if (btnWifiConnect != null) btnWifiConnect.Enabled = true;
+        }
     }
 
     private void ShowAnimatedView(Control target)
@@ -4315,6 +4715,7 @@ public partial class MainForm : Form
         _coordinateCaptureCts?.Cancel();
         _adb.Dispose();
         _iosManager.Dispose();
+        _scrcpyEmbedder.Dispose();
         Logger.OnLog -= OnLogReceived;
     }
 

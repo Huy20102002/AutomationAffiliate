@@ -16,6 +16,45 @@ partial class MainForm
     private TableLayoutPanel workspace;
     private Panel productModulePanel;
     private Guna.UI2.WinForms.Guna2Panel panelWorkflowContainer;
+    private TableLayoutPanel upperWorkflowLayout;
+    private Guna.UI2.WinForms.Guna2Panel panelWorkflowPhone;
+    private Panel topBarWorkflowPhone;
+    private Panel pnlWorkflowScrcpyHost;
+    private Control btnToggleWorkflowPhone;
+    private Control btnWfPhoneHome;
+    private Control btnWfPhoneBack;
+    private Control btnWfPhonePower;
+    private Control btnWfPhoneRestart;
+    private Control btnWfPhoneClose;
+    private Panel panelDevicesView;
+    private Guna.UI2.WinForms.Guna2Panel phoneCardDevices;
+    private Panel phoneToolBarDevices;
+    private Panel phoneBottomBarDevices;
+    private Panel pnlDevicesScrcpyHost;
+    private Label lblDevicesPhoneTitle;
+    private Label lblDevicesPhoneStatus;
+    private Label lblDeviceInfoModel;
+    private Label lblDeviceInfoSerial;
+    private Label lblDeviceInfoRes;
+    private Label lblDeviceInfoAndroid;
+    private Label lblDeviceInfoStatus;
+    private Control btnDevPhonePower;
+    private Control btnDevPhoneHome;
+    private Control btnDevPhoneBack;
+    private Control btnDevPhoneRecents;
+    private Control btnDevPhoneVolUp;
+    private Control btnDevPhoneVolDown;
+    private Control btnDevPhoneScreenshot;
+    private Control btnDevicesStartScrcpy;
+    private Control btnDevicesStopScrcpy;
+    private Control btnOpenShopee;
+    private Control btnOpenTikTok;
+    private Control btnOpenFacebook;
+    private Control btnOpenSettings;
+    private Control btnMediaScan;
+    private Control btnRestartAdb;
+    private Guna.UI2.WinForms.Guna2TextBox txtWifiConnectIp;
+    private Control btnWifiConnect;
     private Guna.UI2.WinForms.Guna2Panel panelInspector;
     private Guna.UI2.WinForms.Guna2Panel panelBottom;
     private Panel panelStatusBar;
@@ -346,19 +385,27 @@ partial class MainForm
         workspace.RowStyles.Add(new RowStyle(SizeType.Percent, 36F));
         viewHost.Controls.Add(workspace);
 
-        var upper = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Color.Transparent };
-        upper.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 73F));
-        upper.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 27F));
-        workspace.Controls.Add(upper, 0, 0);
+        upperWorkflowLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, BackColor = Color.Transparent };
+        upperWorkflowLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        upperWorkflowLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        upperWorkflowLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 0F));
+        upperWorkflowLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 330F));
+        workspace.Controls.Add(upperWorkflowLayout, 0, 0);
 
         panelWorkflowContainer = CreateCardPanel();
+        panelWorkflowPhone = CreateCardPanel();
+        panelWorkflowPhone.Visible = false;
+        panelWorkflowPhone.Padding = new Padding(4);
         panelInspector = CreateCardPanel();
-        upper.Controls.Add(panelWorkflowContainer, 0, 0);
-        upper.Controls.Add(panelInspector, 1, 0);
+        upperWorkflowLayout.Controls.Add(panelWorkflowContainer, 0, 0);
+        upperWorkflowLayout.Controls.Add(panelWorkflowPhone, 1, 0);
+        upperWorkflowLayout.Controls.Add(panelInspector, 2, 0);
 
         BuildWorkflowPanel();
+        BuildWorkflowPhonePanel();
         BuildInspectorPanel();
         BuildBottomPanel(workspace);
+        BuildDevicesPanel();
 
         productModulePanel = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(244, 245, 248), Visible = false };
         productListControl = new ProductListControl { Dock = DockStyle.Fill };
@@ -490,6 +537,19 @@ partial class MainForm
             bGrp.Font = new Font("Segoe UI Semibold", 9F);
         }
 
+        btnToggleWorkflowPhone = CreateButton("📱 Màn hình", Color.FromArgb(243, 244, 246), 115);
+        btnToggleWorkflowPhone.ForeColor = Color.FromArgb(55, 65, 81);
+        btnToggleWorkflowPhone.Margin = new Padding(2, 0, 4, 0);
+        if (btnToggleWorkflowPhone is Guna.UI2.WinForms.Guna2Button bTog)
+        {
+            bTog.BorderColor = Color.FromArgb(209, 213, 219);
+            bTog.BorderThickness = 1;
+            bTog.BorderRadius = 6;
+            bTog.Height = 34;
+            bTog.Font = new Font("Segoe UI Semibold", 9F);
+        }
+
+        profileTips.SetToolTip(btnToggleWorkflowPhone, "Bật / Ẩn màn hình điện thoại Scrcpy bên cạnh sơ đồ quy trình");
         profileTips.SetToolTip(btnGroupToRandomTap, "Gom các bước Chạm đã bôi chọn thành 1 bước Chạm ngẫu nhiên");
         profileTips.SetToolTip(btnManualSaveProfile, "Lưu thay đổi vào quy trình hiện tại");
         profileTips.SetToolTip(btnAddWorkflowProfile, "Tạo một quy trình mới");
@@ -499,7 +559,7 @@ partial class MainForm
         profileTips.SetToolTip(btnLoadWorkflow, "Nhập quy trình từ tệp .json");
         profileTips.SetToolTip(btnExportProfile, "Xuất quy trình ra tệp .json");
 
-        profilePanel.Controls.AddRange([cboWorkflowProfiles, btnGroupToRandomTap, btnManualSaveProfile, btnAddWorkflowProfile, btnDeleteWorkflowProfile, btnRenameWorkflowProfile, btnManageWorkflows, btnLoadWorkflow, btnExportProfile]);
+        profilePanel.Controls.AddRange([cboWorkflowProfiles, btnToggleWorkflowPhone, btnGroupToRandomTap, btnManualSaveProfile, btnAddWorkflowProfile, btnDeleteWorkflowProfile, btnRenameWorkflowProfile, btnManageWorkflows, btnLoadWorkflow, btnExportProfile]);
         heading.Controls.Add(profilePanel);
         panelWorkflowContainer.Controls.Add(heading);
         var toolbar = new Panel { Visible = false, Height = 0 };
@@ -1259,5 +1319,267 @@ partial class MainForm
         button.MouseEnter += (_, _) => { if (button.BackColor != primary) button.BackColor = Color.FromArgb(241, 245, 249); };
         button.MouseLeave += (_, _) => { if (button.BackColor != primary) button.BackColor = Color.Transparent; };
         return button;
+    }
+
+    private void BuildWorkflowPhonePanel()
+    {
+        topBarWorkflowPhone = new Panel { Dock = DockStyle.Top, Height = 34, BackColor = Color.Transparent, Padding = new Padding(4, 0, 4, 4) };
+        var lblTitle = new Label
+        {
+            Text = "📱 Điện thoại",
+            AutoSize = true,
+            Location = new Point(4, 7),
+            Font = new Font("Segoe UI Semibold", 9.5F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(31, 41, 55)
+        };
+        var actionsPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right,
+            AutoSize = true,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false
+        };
+
+        btnWfPhoneHome = CreateIconButton("🏠", "Về màn hình chính (Home)");
+        btnWfPhoneBack = CreateIconButton("⬅", "Quay lại (Back)");
+        btnWfPhonePower = CreateIconButton("⏻", "Bật/Tắt màn hình (Power)");
+        btnWfPhoneRestart = CreateIconButton("🔄", "Khởi động lại Scrcpy");
+        btnWfPhoneClose = CreateIconButton("✕", "Ẩn màn hình điện thoại");
+        btnWfPhoneClose.ForeColor = Color.FromArgb(239, 68, 68);
+
+        actionsPanel.Controls.AddRange([btnWfPhoneHome, btnWfPhoneBack, btnWfPhonePower, btnWfPhoneRestart, btnWfPhoneClose]);
+        topBarWorkflowPhone.Controls.Add(actionsPanel);
+        topBarWorkflowPhone.Controls.Add(lblTitle);
+
+        pnlWorkflowScrcpyHost = new Panel
+        {
+            BackColor = Color.Black,
+            Margin = new Padding(0)
+        };
+
+        panelWorkflowPhone.Controls.Add(pnlWorkflowScrcpyHost);
+        panelWorkflowPhone.Controls.Add(topBarWorkflowPhone);
+        panelWorkflowPhone.Resize += (_, _) => LayoutWorkflowPhone();
+    }
+
+    private void BuildDevicesPanel()
+    {
+        panelDevicesView = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(246, 250, 254),
+            Visible = false,
+            Padding = new Padding(18, 14, 18, 14),
+            AutoScroll = true
+        };
+
+        var heading = CreateHeading("QUẢN LÝ THIẾT BỊ & TRUYỀN HÌNH ẢNH (SCRCPY)", "Xem màn hình điện thoại thời gian thực · điều khiển phím cứng · kết nối Wi-Fi ADB");
+        panelDevicesView.Controls.Add(heading);
+
+        var bodyLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            BackColor = Color.Transparent,
+            Margin = new Padding(0, 8, 0, 0)
+        };
+        bodyLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 400F)); // Left: Phone Mockup
+        bodyLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));  // Right: Controls & Info
+
+        // Left: Phone Mirroring Card
+        var phoneCard = CreateCardPanel();
+        phoneCard.Dock = DockStyle.Fill;
+        phoneCard.Padding = new Padding(12);
+
+        var phoneTopBar = new Panel { Dock = DockStyle.Top, Height = 40, BackColor = Color.Transparent };
+        lblDevicesPhoneTitle = new Label
+        {
+            Text = "📱 Màn hình điện thoại",
+            AutoSize = true,
+            Location = new Point(4, 10),
+            Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(15, 23, 42)
+        };
+        lblDevicesPhoneStatus = new Label
+        {
+            Text = "● Đang chờ",
+            Dock = DockStyle.Right,
+            AutoSize = true,
+            Font = new Font("Segoe UI Semibold", 8.5F),
+            ForeColor = Color.FromArgb(217, 119, 6),
+            Padding = new Padding(0, 10, 4, 0)
+        };
+        phoneTopBar.Controls.Add(lblDevicesPhoneStatus);
+        phoneTopBar.Controls.Add(lblDevicesPhoneTitle);
+
+        var phoneToolBar = new Panel { Dock = DockStyle.Top, Height = 38, BackColor = Color.FromArgb(248, 250, 252), Padding = new Padding(2) };
+        var flpPhoneActions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            BackColor = Color.Transparent
+        };
+        btnDevPhonePower = CreateIconButton("⏻", "Nguồn / Bật tắt màn hình");
+        btnDevPhoneHome = CreateIconButton("🏠", "Màn hình chính (Home)");
+        btnDevPhoneBack = CreateIconButton("⬅", "Quay lại (Back)");
+        btnDevPhoneRecents = CreateIconButton("📋", "Ứng dụng gần đây (Recents)");
+        btnDevPhoneVolUp = CreateIconButton("🔊", "Tăng âm lượng");
+        btnDevPhoneVolDown = CreateIconButton("🔉", "Giảm âm lượng");
+        btnDevPhoneScreenshot = CreateIconButton("📸", "Chụp ảnh màn hình");
+
+        flpPhoneActions.Controls.AddRange([btnDevPhonePower, btnDevPhoneHome, btnDevPhoneBack, btnDevPhoneRecents, btnDevPhoneVolUp, btnDevPhoneVolDown, btnDevPhoneScreenshot]);
+        phoneToolBar.Controls.Add(flpPhoneActions);
+
+        phoneCardDevices = phoneCard;
+        phoneToolBarDevices = phoneToolBar;
+
+        pnlDevicesScrcpyHost = new Panel
+        {
+            BackColor = Color.Black,
+            Margin = new Padding(0)
+        };
+
+        var phoneBottomBar = new Panel { Dock = DockStyle.Bottom, Height = 44, BackColor = Color.Transparent, Padding = new Padding(0, 6, 0, 0) };
+        phoneBottomBarDevices = phoneBottomBar;
+        btnDevicesStartScrcpy = CreateButton("⚡ Bật Scrcpy", Color.FromArgb(79, 70, 229), 115);
+        btnDevicesStartScrcpy.ForeColor = Color.White;
+        btnDevicesStopScrcpy = CreateButton("⏹ Dừng Scrcpy", Color.FromArgb(239, 68, 68), 115);
+        btnDevicesStopScrcpy.ForeColor = Color.White;
+        var flpBottomActions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false
+        };
+        flpBottomActions.Controls.AddRange([btnDevicesStartScrcpy, btnDevicesStopScrcpy]);
+        phoneBottomBar.Controls.Add(flpBottomActions);
+
+        phoneCard.Controls.Add(pnlDevicesScrcpyHost);
+        phoneCard.Controls.Add(phoneBottomBar);
+        phoneCard.Controls.Add(phoneToolBar);
+        phoneCard.Controls.Add(phoneTopBar);
+        phoneCard.Resize += (_, _) => LayoutDevicesPhone();
+
+        bodyLayout.Controls.Add(phoneCard, 0, 0);
+
+        // Right: Device Info & Advanced Tools Card
+        var rightPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoScroll = true,
+            BackColor = Color.Transparent,
+            Padding = new Padding(12, 0, 0, 0)
+        };
+
+        // Right Card 1: Device Information
+        var cardInfo = CreateCardPanel();
+        cardInfo.Width = 650;
+        cardInfo.Height = 175;
+        cardInfo.Padding = new Padding(16, 12, 16, 12);
+        var lblInfoHead = new Label { Text = "THÔNG TIN THIẾT BỊ ĐANG KẾT NỐI", Font = new Font("Segoe UI Semibold", 9.5F, FontStyle.Bold), ForeColor = Color.FromArgb(79, 70, 229), Dock = DockStyle.Top, Height = 24 };
+        var tblInfoGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 3 };
+        tblInfoGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110F));
+        tblInfoGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+        tblInfoGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110F));
+        tblInfoGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+
+        lblDeviceInfoModel = new Label { Text = "Chưa kết nối", AutoSize = true, Font = new Font("Segoe UI Semibold", 9F) };
+        lblDeviceInfoSerial = new Label { Text = "N/A", AutoSize = true, Font = new Font("Segoe UI", 8.5F) };
+        lblDeviceInfoRes = new Label { Text = "N/A", AutoSize = true, Font = new Font("Segoe UI", 8.5F) };
+        lblDeviceInfoAndroid = new Label { Text = "N/A", AutoSize = true, Font = new Font("Segoe UI", 8.5F) };
+        lblDeviceInfoStatus = new Label { Text = "Chưa kết nối", AutoSize = true, Font = new Font("Segoe UI Semibold", 8.5F), ForeColor = Color.FromArgb(146, 64, 14) };
+
+        tblInfoGrid.Controls.Add(new Label { Text = "Thiết bị:", ForeColor = Color.Gray }, 0, 0);
+        tblInfoGrid.Controls.Add(lblDeviceInfoModel, 1, 0);
+        tblInfoGrid.Controls.Add(new Label { Text = "Serial / IP:", ForeColor = Color.Gray }, 2, 0);
+        tblInfoGrid.Controls.Add(lblDeviceInfoSerial, 3, 0);
+
+        tblInfoGrid.Controls.Add(new Label { Text = "Độ phân giải:", ForeColor = Color.Gray }, 0, 1);
+        tblInfoGrid.Controls.Add(lblDeviceInfoRes, 1, 1);
+        tblInfoGrid.Controls.Add(new Label { Text = "Hệ điều hành:", ForeColor = Color.Gray }, 2, 1);
+        tblInfoGrid.Controls.Add(lblDeviceInfoAndroid, 3, 1);
+
+        tblInfoGrid.Controls.Add(new Label { Text = "Trạng thái:", ForeColor = Color.Gray }, 0, 2);
+        tblInfoGrid.Controls.Add(lblDeviceInfoStatus, 1, 2);
+
+        cardInfo.Controls.Add(tblInfoGrid);
+        cardInfo.Controls.Add(lblInfoHead);
+        rightPanel.Controls.Add(cardInfo);
+
+        // Right Card 2: App Launchers & Quick Actions
+        var cardApps = CreateCardPanel();
+        cardApps.Width = 650;
+        cardApps.Height = 135;
+        cardApps.Margin = new Padding(0, 12, 0, 0);
+        cardApps.Padding = new Padding(16, 12, 16, 12);
+        var lblAppsHead = new Label { Text = "MỞ NHANH ỨNG DỤNG & CÔNG CỤ", Font = new Font("Segoe UI Semibold", 9.5F, FontStyle.Bold), ForeColor = Color.FromArgb(15, 23, 42), Dock = DockStyle.Top, Height = 24 };
+        var flpApps = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
+
+        btnOpenShopee = CreateButton("🟠 Shopee", Color.FromArgb(238, 77, 45), 105);
+        btnOpenShopee.ForeColor = Color.White;
+        btnOpenTikTok = CreateButton("⚫ TikTok", Color.FromArgb(18, 18, 18), 100);
+        btnOpenTikTok.ForeColor = Color.White;
+        btnOpenFacebook = CreateButton("🔵 Facebook", Color.FromArgb(24, 119, 242), 110);
+        btnOpenFacebook.ForeColor = Color.White;
+        btnOpenSettings = CreateButton("⚙️ Cài đặt máy", Color.FromArgb(243, 244, 246), 115);
+        btnOpenSettings.ForeColor = Color.FromArgb(55, 65, 81);
+        btnMediaScan = CreateButton("🧹 Quét Media", Color.FromArgb(243, 244, 246), 110);
+        btnMediaScan.ForeColor = Color.FromArgb(55, 65, 81);
+        btnRestartAdb = CreateButton("🔄 Reset ADB", Color.FromArgb(243, 244, 246), 105);
+        btnRestartAdb.ForeColor = Color.FromArgb(55, 65, 81);
+
+        flpApps.Controls.AddRange([btnOpenShopee, btnOpenTikTok, btnOpenFacebook, btnOpenSettings, btnMediaScan, btnRestartAdb]);
+        cardApps.Controls.Add(flpApps);
+        cardApps.Controls.Add(lblAppsHead);
+        rightPanel.Controls.Add(cardApps);
+
+        // Right Card 3: Wi-Fi ADB Wireless Connection
+        var cardWifi = CreateCardPanel();
+        cardWifi.Width = 650;
+        cardWifi.Height = 145;
+        cardWifi.Margin = new Padding(0, 12, 0, 0);
+        cardWifi.Padding = new Padding(16, 12, 16, 12);
+        var lblWifiHead = new Label { Text = "KẾT NỐI ADB KHÔNG DÂY (WI-FI)", Font = new Font("Segoe UI Semibold", 9.5F, FontStyle.Bold), ForeColor = Color.FromArgb(15, 23, 42), Dock = DockStyle.Top, Height = 24 };
+        var lblWifiSub = new Label { Text = "Nhập IP và Cổng trên điện thoại (Cài đặt -> Tùy chọn nhà phát triển -> Gỡ lỗi không dây)", Dock = DockStyle.Top, Height = 20, ForeColor = Color.Gray, Font = new Font("Segoe UI", 8F) };
+
+        var flpWifi = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Margin = new Padding(0, 4, 0, 0) };
+        txtWifiConnectIp = CreateTextBox();
+        txtWifiConnectIp.PlaceholderText = "192.168.1.x:cổng (VD: 192.168.100.73:35029)";
+        txtWifiConnectIp.Width = 320;
+        btnWifiConnect = CreateButton("⚡ Kết nối Wi-Fi", Color.FromArgb(16, 185, 129), 140);
+        btnWifiConnect.ForeColor = Color.White;
+
+        flpWifi.Controls.AddRange([txtWifiConnectIp, btnWifiConnect]);
+        cardWifi.Controls.Add(flpWifi);
+        cardWifi.Controls.Add(lblWifiSub);
+        cardWifi.Controls.Add(lblWifiHead);
+        rightPanel.Controls.Add(cardWifi);
+
+        bodyLayout.Controls.Add(rightPanel, 1, 0);
+        panelDevicesView.Controls.Add(bodyLayout);
+
+        viewHost.Controls.Add(panelDevicesView);
+    }
+
+    private static Control CreateIconButton(string icon, string tooltip)
+    {
+        var btn = new Guna.UI2.WinForms.Guna2Button
+        {
+            Text = icon,
+            Size = new Size(30, 30),
+            FillColor = Color.FromArgb(243, 244, 246),
+            ForeColor = Color.FromArgb(55, 65, 81),
+            BorderRadius = 5,
+            Cursor = Cursors.Hand,
+            Margin = new Padding(2, 2, 2, 2),
+            Font = new Font("Segoe UI Emoji", 9F)
+        };
+        var tip = new ToolTip();
+        tip.SetToolTip(btn, tooltip);
+        return btn;
     }
 }

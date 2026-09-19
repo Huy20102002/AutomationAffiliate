@@ -123,6 +123,9 @@ public static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
 
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
     /// <summary>
     /// Điều chỉnh vị trí, kích thước, và Z-order của cửa sổ.
     /// Linh hoạt hơn MoveWindow, cho phép set flags bổ sung.
@@ -213,4 +216,26 @@ public static class NativeMethods
 
     /// <summary>Message đóng cửa sổ</summary>
     public const uint WM_CLOSE = 0x0010;
+
+    // --- ShowWindow Commands ---
+    public const int SW_HIDE = 0;
+    public const int SW_SHOW = 5;
+
+    /// <summary>Clip các cửa sổ con khi vẽ (ngăn flicker/clipping)</summary>
+    public const int WS_CLIPCHILDREN = 0x02000000;
+
+    /// <summary>Clip các cửa sổ cùng cấp khi vẽ</summary>
+    public const int WS_CLIPSIBLINGS = 0x04000000;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
 }

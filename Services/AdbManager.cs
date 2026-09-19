@@ -745,6 +745,32 @@ public class AdbManager : IDisposable
 
 
 
+    public async Task<string> ConnectWirelessAsync(string endpoint)
+    {
+        if (string.IsNullOrWhiteSpace(_adbPath) || !File.Exists(_adbPath)) return "Không tìm thấy adb.exe";
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = _adbPath,
+                Arguments = $"connect {endpoint.Trim()}",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            using var p = Process.Start(psi);
+            if (p == null) return "Không thể chạy tiến trình adb";
+            var stdout = await p.StandardOutput.ReadToEndAsync();
+            var stderr = await p.StandardError.ReadToEndAsync();
+            await p.WaitForExitAsync();
+            return string.IsNullOrWhiteSpace(stdout) ? stderr : stdout;
+        }
+        catch (Exception ex)
+        {
+            return $"Lỗi kết nối: {ex.Message}";
+        }
+    }
 
     private void EnsureInit()
     {
