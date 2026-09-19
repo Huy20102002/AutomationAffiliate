@@ -1,3 +1,4 @@
+using ShopeeVideoUploader.Helpers;
 using ShopeeVideoUploader.Models;
 
 namespace ShopeeVideoUploader.Controls;
@@ -28,6 +29,7 @@ public sealed class ProductEditorDialog : Form
     private bool _isApplyingLink = false;
     private readonly bool _isEditMode;
     private readonly bool _isBulkEditMode;
+    private Dictionary<string, List<DuplicateInfo>>? _duplicateMap;
 
     public JobItem Result { get; private set; } = new();
     public List<JobItem> BulkResults { get; } = [];
@@ -674,6 +676,7 @@ public sealed class ProductEditorDialog : Form
             foreach (var item in editItems)
                 _bulkGrid.Rows.Add(item.VideoPath, item.Title, item.ShopeeAffLink);
             RefreshBulkLinkPicker(allProducts);
+            HighlightCrossCampaignDuplicates();
             UpdateFileCount(0);
         }
 
@@ -726,15 +729,19 @@ public sealed class ProductEditorDialog : Form
             existingInGrid.Add(row.Cells["colFile"].Value?.ToString() ?? "");
 
         var added = 0;
+        var skippedInGrid = 0;
         foreach (var file in dialog.FileNames)
         {
-            if (_existingPaths.Contains(file) || existingInGrid.Contains(file)) continue;
+            // Chỉ skip nếu đã có trong grid hiện tại (tránh thêm 2 lần cùng 1 file)
+            if (existingInGrid.Contains(file)) { skippedInGrid++; continue; }
             var title = _chkUseFileName?.Checked == true ? Path.GetFileNameWithoutExtension(file) : "";
             _bulkGrid.Rows.Add(file, title, "");
+            existingInGrid.Add(file);
             added++;
         }
-        var skipped = dialog.FileNames.Length - added;
-        UpdateFileCount(skipped);
+        // Highlight cảnh báo trùng cross-campaign
+        HighlightCrossCampaignDuplicates();
+        UpdateFileCount(skippedInGrid);
     }
 
     private void BrowseMultipleImages()
@@ -761,15 +768,16 @@ public sealed class ProductEditorDialog : Form
         foreach (DataGridViewRow row in _bulkGrid!.Rows)
             existingInGrid.Add(row.Cells["colFile"].Value?.ToString() ?? "");
 
-        if (_existingPaths.Contains(combinedPath) || existingInGrid.Contains(combinedPath))
+        if (existingInGrid.Contains(combinedPath))
         {
-            MessageBox.Show(this, "Bài viết với danh sách ảnh này đã có trong danh sách.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, "Bài viết với danh sách ảnh này đã có trong danh sách hiện tại.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
         var firstFile = selectedFiles[0];
         var title = _chkUseFileName?.Checked == true ? Path.GetFileNameWithoutExtension(firstFile) : "";
         _bulkGrid.Rows.Add(combinedPath, title, "");
+        HighlightCrossCampaignDuplicates();
         UpdateFileCount(0);
     }
 
@@ -809,7 +817,7 @@ public sealed class ProductEditorDialog : Form
                 if (imgs.Length == 0) continue;
 
                 var combined = string.Join("; ", imgs);
-                if (_existingPaths.Contains(combined) || existingInGrid.Contains(combined))
+                if (existingInGrid.Contains(combined))
                 {
                     skipped++;
                     continue;
@@ -831,7 +839,7 @@ public sealed class ProductEditorDialog : Form
             if (imgs.Length > 0)
             {
                 var combined = string.Join("; ", imgs);
-                if (!_existingPaths.Contains(combined) && !existingInGrid.Contains(combined))
+                if (!existingInGrid.Contains(combined))
                 {
                     var title = _chkUseFileName?.Checked == true ? Path.GetFileName(rootDir) : "";
                     _bulkGrid.Rows.Add(combined, title, "");
@@ -844,6 +852,7 @@ public sealed class ProductEditorDialog : Form
             }
         }
 
+        HighlightCrossCampaignDuplicates();
         UpdateFileCount(skipped);
     }
 
@@ -960,9 +969,11 @@ public sealed class ProductEditorDialog : Form
     {
         if (_bulkGrid == null) return;
 
+        // Build set trùng trong grid + cross-campaign
         HashSet<string>? duplicatePaths = null;
         if (_showBulkDuplicatesOnly)
         {
+            // Trùng trong grid hiện tại
             var paths = new List<string>();
             foreach (DataGridViewRow row in _bulkGrid.Rows)
             {
@@ -973,6 +984,20 @@ public sealed class ProductEditorDialog : Form
                                   .Where(g => g.Count() > 1)
                                   .Select(g => g.Key)
                                   .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            // Trùng cross-campaign (đã tồn tại trong _allProducts)
+            EnsureDuplicateMap();
+            if (_duplicateMap != null)
+            {
+                foreach (DataGridViewRow row in _bulkGrid.Rows)
+                {
+                    var p = Convert.ToString(row.Cells["colFile"].Value) ?? "";
+                    if (string.IsNullOrWhiteSpace(p)) continue;
+                    var norm = PathHelper.NormalizePath(p);
+                    if (_duplicateMap.ContainsKey(norm))
+                        duplicatePaths.Add(p);
+                }
+            }
         }
 
         _bulkGrid.CurrentCell = null; 
@@ -989,6 +1014,85 @@ public sealed class ProductEditorDialog : Form
             bool matchesDuplicate = !_showBulkDuplicatesOnly || (duplicatePaths != null && duplicatePaths.Contains(path));
 
             row.Visible = matchesSearch && matchesDuplicate;
+        }
+    }
+
+    /// <summary>
+    /// Đảm bảo _duplicateMap được build từ _allProducts (lazy init).
+    /// </summary>
+    private void EnsureDuplicateMap()
+    {
+        _duplicateMap ??= PathHelper.BuildDuplicateMap(_allProducts, _folders);
+    }
+
+    /// <summary>
+    /// Highlight các dòng trong _bulkGrid mà đường dẫn video đã tồn tại ở chiến dịch khác.
+    /// Đặt background vàng/cam + tooltip cảnh báo chiến dịch trùng.
+    /// </summary>
+    private void HighlightCrossCampaignDuplicates()
+    {
+        if (_bulkGrid == null || _allProducts.Count == 0) return;
+
+        EnsureDuplicateMap();
+        if (_duplicateMap == null) return;
+
+        var warnBg = Color.FromArgb(255, 243, 205);     // vàng nhạt
+        var warnFg = Color.FromArgb(133, 100, 4);       // chữ nâu
+        var normalBg = Color.White;
+        var normalFg = Color.FromArgb(31, 31, 44);
+
+        int dupCount = 0;
+
+        foreach (DataGridViewRow row in _bulkGrid.Rows)
+        {
+            var filePath = Convert.ToString(row.Cells["colFile"].Value) ?? "";
+            if (string.IsNullOrWhiteSpace(filePath))
+            {
+                // Reset về bình thường
+                row.Cells["colFile"].Style.BackColor = normalBg;
+                row.Cells["colFile"].Style.ForeColor = normalFg;
+                row.Cells["colFile"].ToolTipText = "";
+                continue;
+            }
+
+            var normalized = PathHelper.NormalizePath(filePath);
+            if (_duplicateMap.TryGetValue(normalized, out var duplicates) && duplicates.Count > 0)
+            {
+                // Tìm các chiến dịch trùng (group by folder name)
+                var campaignNames = duplicates
+                    .Select(d => d.FolderName)
+                    .Distinct()
+                    .ToList();
+
+                var tooltip = $"⚠️ TRÙNG! Đã có trong {duplicates.Count} sản phẩm:\n" +
+                    string.Join("\n", duplicates.Take(5).Select(d =>
+                        $"  • [{d.FolderName}] {(string.IsNullOrEmpty(d.Title) ? "(không có tiêu đề)" : d.Title)}")) +
+                    (duplicates.Count > 5 ? $"\n  ... và {duplicates.Count - 5} sản phẩm khác" : "");
+
+                row.Cells["colFile"].Style.BackColor = warnBg;
+                row.Cells["colFile"].Style.ForeColor = warnFg;
+                row.Cells["colFile"].ToolTipText = tooltip;
+
+                // Highlight cả dòng nhẹ
+                row.DefaultCellStyle.BackColor = Color.FromArgb(255, 251, 235);
+                dupCount++;
+            }
+            else
+            {
+                // Reset về bình thường
+                row.Cells["colFile"].Style.BackColor = normalBg;
+                row.Cells["colFile"].Style.ForeColor = normalFg;
+                row.Cells["colFile"].ToolTipText = "";
+                row.DefaultCellStyle.BackColor = Color.Empty;
+            }
+        }
+
+        // Cập nhật file count label nếu có trùng
+        if (dupCount > 0 && _fileCountLabel != null)
+        {
+            var total = _bulkGrid.Rows.Count;
+            _fileCountLabel.Text = $"{total} bài viết (⚠️ {dupCount} trùng chiến dịch khác)";
+            _fileCountLabel.ForeColor = Color.FromArgb(180, 120, 0);
         }
     }
 
@@ -1010,7 +1114,16 @@ public sealed class ProductEditorDialog : Form
             { ShowWarn("Một hoặc nhiều file video/ảnh không tồn tại."); return; }
 
             if (_existingPaths.Contains(videoPath) && !string.Equals(_original?.VideoPath, videoPath, StringComparison.OrdinalIgnoreCase))
-            { ShowWarn("Đường dẫn này đã tồn tại trong danh sách."); return; }
+            {
+                // Tìm chi tiết trùng ở chiến dịch nào
+                var dups = PathHelper.FindDuplicates(videoPath, _allProducts, _folders);
+                var dupInfo = dups.Count > 0
+                    ? string.Join("\n", dups.Take(5).Select(d => $"  • [{d.FolderName}] {(string.IsNullOrEmpty(d.Title) ? "(không có tiêu đề)" : d.Title)}"))
+                    : "  (chiến dịch không xác định)";
+                var msg = $"⚠️ Đường dẫn này đã tồn tại trong {dups.Count} sản phẩm:\n{dupInfo}\n\nBạn vẫn muốn lưu?";
+                if (MessageBox.Show(this, msg, "Cảnh báo trùng đường dẫn", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                    return;
+            }
 
             int? folderId = _original?.FolderId;
             if (_folderPicker?.SelectedItem is FolderItem fi) folderId = fi.Id > 0 ? fi.Id : (fi.Id == 0 ? null : _original?.FolderId);
@@ -1032,6 +1145,27 @@ public sealed class ProductEditorDialog : Form
         {
             if (_bulkGrid == null || _bulkGrid.Rows.Count == 0)
             { ShowWarn("Vui lòng chọn ít nhất 1 video hoặc ảnh."); return; }
+
+            // Kiểm tra và cảnh báo nếu có file trùng cross-campaign
+            if (_allProducts.Count > 0)
+            {
+                EnsureDuplicateMap();
+                int dupCount = 0;
+                foreach (DataGridViewRow row in _bulkGrid.Rows)
+                {
+                    var fp = Convert.ToString(row.Cells["colFile"].Value) ?? "";
+                    if (string.IsNullOrWhiteSpace(fp)) continue;
+                    var norm = PathHelper.NormalizePath(fp);
+                    if (_duplicateMap != null && _duplicateMap.ContainsKey(norm))
+                        dupCount++;
+                }
+                if (dupCount > 0)
+                {
+                    var msg = $"⚠️ Có {dupCount} file đã tồn tại ở chiến dịch khác.\nBạn vẫn muốn thêm?";
+                    if (MessageBox.Show(this, msg, "Cảnh báo trùng đường dẫn", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                        return;
+                }
+            }
 
             foreach (DataGridViewRow row in _bulkGrid.Rows)
             {
