@@ -4284,6 +4284,7 @@ public partial class MainForm : Form
         bool useAiTitle = false;
         int delayMin = 0;
         int delayMax = 0;
+        bool shuffleVideos = true;
         int folderId = (cboMainFolderSelect?.SelectedItem as ShopeeVideoUploader.Models.FolderItem)?.Id ?? -1;
         
         using (var dialog = new Controls.PlatformSelectDialog())
@@ -4293,6 +4294,7 @@ public partial class MainForm : Form
             useAiTitle = dialog.UseAiTitle;
             delayMin = dialog.DelayMinMinutes;
             delayMax = dialog.DelayMaxMinutes;
+            shuffleVideos = dialog.ShuffleVideos;
         }
 
         List<Models.JobItem> jobsToRun = [];
@@ -4314,6 +4316,12 @@ public partial class MainForm : Form
         if (chkOnlyWithLink != null && chkOnlyWithLink.Checked)
         {
             jobsToRun = jobsToRun.Where(j => !string.IsNullOrWhiteSpace(j.ShopeeAffLink)).ToList();
+        }
+
+        if (shuffleVideos && jobsToRun.Count > 1)
+        {
+            jobsToRun = ShuffleJobsAvoidConsecutiveSameProduct(jobsToRun);
+            Logger.Info($"[Workflow] Đã xáo trộn thứ tự {jobsToRun.Count} video (xen kẽ sản phẩm để tránh đăng liên tiếp cùng 1 sản phẩm).");
         }
 
         if (jobsToRun.Count == 0)
@@ -4708,6 +4716,54 @@ public partial class MainForm : Form
             _cts?.Dispose();
             _cts = null;
         }
+    }
+
+    private static List<JobItem> ShuffleJobsAvoidConsecutiveSameProduct(List<JobItem> jobs)
+    {
+        if (jobs.Count <= 2) return jobs;
+
+        var rng = new Random();
+
+        // Nhận diện sản phẩm: Ưu tiên ShopeeAffLink, sau đó đến Title hoặc folder
+        string GetProductKey(JobItem j)
+        {
+            if (!string.IsNullOrWhiteSpace(j.ShopeeAffLink))
+                return "link:" + j.ShopeeAffLink.Trim().ToLowerInvariant();
+
+            var t = j.Title?.Trim();
+            if (!string.IsNullOrWhiteSpace(t))
+            {
+                var words = t.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (words.Length >= 2)
+                    return "title:" + string.Join(" ", words.Take(2)).ToLowerInvariant();
+            }
+
+            return "folder:" + (j.FolderId ?? 0);
+        }
+
+        // Gom các video theo sản phẩm
+        var groups = jobs
+            .GroupBy(GetProductKey, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderBy(_ => rng.Next()).ToList())
+            .OrderBy(_ => rng.Next())
+            .ToList();
+
+        var result = new List<JobItem>(jobs.Count);
+        bool hasRemaining = true;
+
+        while (hasRemaining)
+        {
+            hasRemaining = false;
+            var activeGroups = groups.Where(g => g.Count > 0).OrderBy(_ => rng.Next()).ToList();
+            foreach (var group in activeGroups)
+            {
+                result.Add(group[0]);
+                group.RemoveAt(0);
+                if (group.Count > 0) hasRemaining = true;
+            }
+        }
+
+        return result;
     }
 
     private void SetRunningStepFromWorker(int stepIndex)

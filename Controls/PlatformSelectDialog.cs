@@ -10,10 +10,12 @@ public sealed class PlatformSelectDialog : Form
     public bool UseAiTitle { get; private set; }
     public int DelayMinMinutes { get; private set; }
     public int DelayMaxMinutes { get; private set; }
+    public bool ShuffleVideos { get; private set; } = true;
+
     public PlatformSelectDialog()
     {
-        Text = "Chọn nền tảng";
-        ClientSize = new Size(360, 260);
+        Text = "Chọn nền tảng & Cấu hình chạy";
+        ClientSize = new Size(390, 295);
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -37,7 +39,7 @@ public sealed class PlatformSelectDialog : Form
             Font = new Font("Segoe UI", 8.5F),
             ForeColor = Color.FromArgb(114, 117, 134),
             Location = new Point(22, 48),
-            Size = new Size(316, 30)
+            Size = new Size(346, 30)
         };
         
         var chkUseAi = new Guna.UI2.WinForms.Guna2CheckBox
@@ -52,7 +54,7 @@ public sealed class PlatformSelectDialog : Form
         var btnConfigAi = new Guna.UI2.WinForms.Guna2Button
         {
             Text = "⚙",
-            Location = new Point(310, 90),
+            Location = new Point(340, 90),
             Size = new Size(30, 30),
             FillColor = Color.FromArgb(235, 237, 242),
             ForeColor = Color.FromArgb(70, 70, 85),
@@ -81,8 +83,8 @@ public sealed class PlatformSelectDialog : Form
 
         var numMin = new Guna.UI2.WinForms.Guna2NumericUpDown
         {
-            Location = new Point(190, 130),
-            Size = new Size(60, 30),
+            Location = new Point(200, 130),
+            Size = new Size(65, 30),
             Minimum = 0,
             Maximum = 999,
             Value = 0,
@@ -94,15 +96,15 @@ public sealed class PlatformSelectDialog : Form
         var lblTo = new Label
         {
             Text = "-",
-            Location = new Point(255, 135),
+            Location = new Point(272, 135),
             AutoSize = true,
             Font = new Font("Segoe UI", 9F)
         };
 
         var numMax = new Guna.UI2.WinForms.Guna2NumericUpDown
         {
-            Location = new Point(275, 130),
-            Size = new Size(60, 30),
+            Location = new Point(295, 130),
+            Size = new Size(65, 30),
             Minimum = 0,
             Maximum = 999,
             Value = 0,
@@ -111,11 +113,22 @@ public sealed class PlatformSelectDialog : Form
             UpDownButtonFillColor = Color.FromArgb(235, 237, 242)
         };
 
+        var chkShuffle = new Guna.UI2.WinForms.Guna2CheckBox
+        {
+            Text = "🔀 Xáo trộn thứ tự (tránh up liên tiếp cùng 1 sản phẩm)",
+            Location = new Point(22, 175),
+            AutoSize = true,
+            Font = new Font("Segoe UI Semibold", 9F),
+            ForeColor = Color.FromArgb(31, 31, 44),
+            Checked = true,
+            Cursor = Cursors.Hand
+        };
+
         var btnShopee = new Guna.UI2.WinForms.Guna2Button
         {
             Text = "Shopee",
-            Location = new Point(20, 190),
-            Size = new Size(150, 44),
+            Location = new Point(22, 225),
+            Size = new Size(160, 44),
             FillColor = Color.FromArgb(238, 77, 45),
             ForeColor = Color.White,
             Font = new Font("Segoe UI Semibold", 10F),
@@ -127,6 +140,7 @@ public sealed class PlatformSelectDialog : Form
             UseAiTitle = chkUseAi.Checked;
             DelayMinMinutes = (int)numMin.Value;
             DelayMaxMinutes = (int)numMax.Value;
+            ShuffleVideos = chkShuffle.Checked;
             SelectedPlatform = "Shopee";
             DialogResult = DialogResult.OK;
             Close();
@@ -135,8 +149,8 @@ public sealed class PlatformSelectDialog : Form
         var btnFb = new Guna.UI2.WinForms.Guna2Button
         {
             Text = "Facebook",
-            Location = new Point(180, 190),
-            Size = new Size(150, 44),
+            Location = new Point(200, 225),
+            Size = new Size(160, 44),
             FillColor = Color.FromArgb(24, 119, 242),
             ForeColor = Color.White,
             Font = new Font("Segoe UI Semibold", 10F),
@@ -148,11 +162,12 @@ public sealed class PlatformSelectDialog : Form
             UseAiTitle = chkUseAi.Checked;
             DelayMinMinutes = (int)numMin.Value;
             DelayMaxMinutes = (int)numMax.Value;
+            ShuffleVideos = chkShuffle.Checked;
             SelectedPlatform = "Facebook";
             DialogResult = DialogResult.OK;
             Close();
         };
 
-        Controls.AddRange([lblTitle, lblDesc, chkUseAi, btnConfigAi, lblDelay, numMin, lblTo, numMax, btnShopee, btnFb]);
+        Controls.AddRange([lblTitle, lblDesc, chkUseAi, btnConfigAi, lblDelay, numMin, lblTo, numMax, chkShuffle, btnShopee, btnFb]);
     }
 }
