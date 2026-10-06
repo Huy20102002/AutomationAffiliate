@@ -1,23 +1,31 @@
 using Guna.UI2.WinForms;
+using ShopeeVideoUploader.Services;
 
 namespace ShopeeVideoUploader.Controls;
 
 /// <summary>
-/// Dialog cho phép người dùng sửa hoặc dán hàng loạt tiêu đề cho các video được chọn (mỗi dòng 1 tiêu đề).
+/// Dialog sửa danh sách tiêu đề dạng văn bản nhiều dòng (mỗi dòng 1 tiêu đề)
+/// Hỗ trợ viết trực tiếp, dán danh sách, và tích hợp tạo/sửa tiêu đề bằng AI.
 /// </summary>
 public sealed class BulkTitleEditorDialog : Form
 {
-    private readonly DataGridView _grid;
-    private readonly Label _lblInfo;
+    private readonly TextBox _txtTitles;
+    private readonly Label _lblLineCount;
+    private readonly Guna2Button _btnAiGenerate;
+    private readonly IReadOnlyList<(string VideoPath, string Title)> _items;
+    private bool _isGeneratingAi = false;
+
     public List<string> ResultTitles { get; } = [];
 
     public BulkTitleEditorDialog(IReadOnlyList<(string VideoPath, string Title)> items)
     {
-        Text = $"Sửa danh sách tiêu đề ({items.Count} video)";
-        Size = new Size(880, 600);
-        MinimumSize = new Size(700, 450);
+        _items = items ?? [];
+
+        Text = $"Sửa danh sách tiêu đề ({_items.Count} video)";
+        Size = new Size(820, 560);
+        MinimumSize = new Size(650, 420);
         StartPosition = FormStartPosition.CenterParent;
-        BackColor = Color.FromArgb(244, 245, 248);
+        BackColor = Color.FromArgb(24, 24, 27);
         Font = new Font("Segoe UI", 9F);
         ShowIcon = false;
         MinimizeBox = false;
@@ -26,25 +34,25 @@ public sealed class BulkTitleEditorDialog : Form
         var pnlHeader = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 65,
-            BackColor = Color.White,
-            Padding = new Padding(20, 10, 20, 10)
+            Height = 62,
+            BackColor = Color.FromArgb(32, 33, 36),
+            Padding = new Padding(18, 8, 18, 8)
         };
         var lblTitle = new Label
         {
-            Text = $"✏️ SỬA TIÊU ĐỀ HÀNG LOẠT ({items.Count} VIDEO)",
+            Text = $"📝 SỬA DANH SÁCH TIÊU ĐỀ ({_items.Count} VIDEO)",
             Font = new Font("Segoe UI Semibold", 11F),
-            ForeColor = Color.FromArgb(31, 31, 44),
+            ForeColor = Color.White,
             AutoSize = true,
-            Location = new Point(18, 10)
+            Location = new Point(16, 8)
         };
         var lblSubtitle = new Label
         {
-            Text = "Mỗi dòng trong bảng tương ứng với 1 video theo thứ tự. Bạn có thể sửa trực tiếp hoặc bấm [Dán từ Clipboard] để nhập nhanh danh sách.",
+            Text = "Mỗi dòng tương ứng với 1 video theo thứ tự. Bạn có thể gõ, dán danh sách từ Excel/Notepad hoặc bấm [Tạo tiêu đề AI].",
             Font = new Font("Segoe UI", 8.5F),
-            ForeColor = Color.FromArgb(114, 117, 134),
+            ForeColor = Color.FromArgb(160, 165, 175),
             AutoSize = true,
-            Location = new Point(19, 35)
+            Location = new Point(17, 33)
         };
         pnlHeader.Controls.AddRange([lblTitle, lblSubtitle]);
 
@@ -52,124 +60,75 @@ public sealed class BulkTitleEditorDialog : Form
         var pnlToolbar = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 48,
-            BackColor = Color.FromArgb(250, 251, 253),
-            Padding = new Padding(16, 7, 16, 7),
+            Height = 46,
+            BackColor = Color.FromArgb(39, 39, 42),
+            Padding = new Padding(14, 6, 14, 6),
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false
         };
 
-        var btnPasteList = CreateButton("📋 Dán từ Clipboard (mỗi dòng 1 tiêu đề)", Color.FromArgb(79, 70, 229), 260);
-        btnPasteList.Click += (_, _) => PasteTitlesFromClipboard();
+        _btnAiGenerate = CreateButton("✨ Tạo tiêu đề AI", Color.FromArgb(147, 51, 234), 145);
+        _btnAiGenerate.Click += async (_, _) => await GenerateAiTitlesAsync();
 
-        var btnUseFileName = CreateButton("📂 Lấy lại tên file làm tiêu đề", Color.FromArgb(96, 82, 218), 195);
-        btnUseFileName.Click += (_, _) => ResetTitlesToFileName();
+        var btnPaste = CreateButton("📋 Dán từ Clipboard", Color.FromArgb(79, 70, 229), 150);
+        btnPaste.Click += (_, _) => PasteFromClipboard();
 
-        var btnAddHashtag = CreateButton("✨ Thêm Hashtag / Hậu tố...", Color.FromArgb(10, 151, 205), 185);
+        var btnUseFileName = CreateButton("📂 Lấy tên file gốc", Color.FromArgb(59, 130, 246), 140);
+        btnUseFileName.Click += (_, _) => ResetToFileName();
+
+        var btnAddHashtag = CreateButton("✨ Thêm Hashtag...", Color.FromArgb(13, 148, 136), 140);
         btnAddHashtag.Click += (_, _) => PromptAddSuffix();
 
-        var btnClear = CreateButton("🧹 Xóa trắng", Color.FromArgb(241, 226, 229), 95);
-        btnClear.ForeColor = Color.FromArgb(180, 50, 50);
-        btnClear.Click += (_, _) => ClearAllTitles();
+        var btnClear = CreateButton("🧹 Xóa trắng", Color.FromArgb(75, 85, 99), 100);
+        btnClear.Click += (_, _) => ClearAll();
 
-        _lblInfo = new Label
+        _lblLineCount = new Label
         {
-            Text = $"{items.Count} video",
+            Text = $"0 / {_items.Count} dòng",
             AutoSize = true,
-            Font = new Font("Segoe UI Semibold", 8.5F),
-            ForeColor = Color.FromArgb(79, 70, 229),
-            Margin = new Padding(12, 8, 0, 0)
+            Font = new Font("Segoe UI Semibold", 9F),
+            ForeColor = Color.FromArgb(52, 211, 153),
+            Margin = new Padding(12, 7, 0, 0)
         };
 
-        pnlToolbar.Controls.AddRange([btnPasteList, btnUseFileName, btnAddHashtag, btnClear, _lblInfo]);
+        pnlToolbar.Controls.AddRange([_btnAiGenerate, btnPaste, btnUseFileName, btnAddHashtag, btnClear, _lblLineCount]);
 
-        // ── 3. DataGridView ──
-        _grid = new DataGridView
+        // ── 3. Multi-line Text Editor (Dark Theme) ──
+        var pnlEditor = new Panel
         {
             Dock = DockStyle.Fill,
-            AllowUserToAddRows = false,
-            AllowUserToDeleteRows = false,
-            AutoGenerateColumns = false,
-            BackgroundColor = Color.White,
-            BorderStyle = BorderStyle.None,
-            GridColor = Color.FromArgb(235, 237, 242),
-            RowHeadersVisible = false,
-            EnableHeadersVisualStyles = false,
-            AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-            RowTemplate = { Height = 40 },
-            Font = new Font("Segoe UI", 9.5F),
-            SelectionMode = DataGridViewSelectionMode.CellSelect
-        };
-        _grid.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
-        {
-            BackColor = Color.FromArgb(244, 245, 248),
-            ForeColor = Color.FromArgb(96, 82, 218),
-            Font = new Font("Segoe UI Semibold", 9.5F),
-            Padding = new Padding(8, 4, 8, 4)
-        };
-        _grid.ColumnHeadersHeight = 38;
-        _grid.DefaultCellStyle = new DataGridViewCellStyle
-        {
-            BackColor = Color.White,
-            ForeColor = Color.FromArgb(31, 31, 44),
-            SelectionBackColor = Color.FromArgb(225, 240, 252),
-            SelectionForeColor = Color.FromArgb(31, 31, 44),
-            Padding = new Padding(8, 2, 8, 2)
+            Padding = new Padding(16, 10, 16, 10),
+            BackColor = Color.FromArgb(24, 24, 27)
         };
 
-        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        _txtTitles = new TextBox
         {
-            Name = "colStt",
-            HeaderText = "STT",
-            Width = 50,
-            ReadOnly = true,
-            AutoSizeMode = DataGridViewAutoSizeColumnMode.None,
-            SortMode = DataGridViewColumnSortMode.NotSortable,
-            DefaultCellStyle = new DataGridViewCellStyle
-            {
-                Alignment = DataGridViewContentAlignment.MiddleCenter,
-                ForeColor = Color.FromArgb(120, 125, 145)
-            }
-        });
+            Dock = DockStyle.Fill,
+            Multiline = true,
+            ScrollBars = ScrollBars.Both,
+            WordWrap = false,
+            BackColor = Color.FromArgb(30, 30, 30),
+            ForeColor = Color.FromArgb(240, 240, 240),
+            Font = new Font("Consolas", 10.5F),
+            BorderStyle = BorderStyle.FixedSingle
+        };
+        _txtTitles.TextChanged += (_, _) => UpdateLineCount();
 
-        _grid.Columns.Add(new DataGridViewTextBoxColumn
-        {
-            Name = "colFile",
-            HeaderText = "File video / ảnh",
-            Width = 240,
-            ReadOnly = true,
-            SortMode = DataGridViewColumnSortMode.NotSortable,
-            DefaultCellStyle = new DataGridViewCellStyle
-            {
-                ForeColor = Color.FromArgb(110, 115, 130)
-            }
-        });
+        // Nạp tiêu đề hiện tại
+        var initialLines = _items.Select(i => i.Title ?? string.Empty).ToList();
+        _txtTitles.Text = string.Join(Environment.NewLine, initialLines);
+        _txtTitles.SelectionStart = 0;
+        _txtTitles.SelectionLength = 0;
 
-        _grid.Columns.Add(new DataGridViewTextBoxColumn
-        {
-            Name = "colTitle",
-            HeaderText = "Tiêu đề (click vào ô để sửa)",
-            FillWeight = 60,
-            SortMode = DataGridViewColumnSortMode.NotSortable
-        });
-
-        // Nạp dữ liệu
-        for (int i = 0; i < items.Count; i++)
-        {
-            var (path, title) = items[i];
-            var fileName = Path.GetFileName(path.Split(';').FirstOrDefault()?.Trim() ?? path);
-            var rowIdx = _grid.Rows.Add(i + 1, fileName, title);
-            _grid.Rows[rowIdx].Cells["colFile"].ToolTipText = path;
-            _grid.Rows[rowIdx].Tag = path;
-        }
+        pnlEditor.Controls.Add(_txtTitles);
 
         // ── 4. Bottom panel ──
         var pnlBottom = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
-            Height = 58,
-            BackColor = Color.FromArgb(250, 251, 253),
-            Padding = new Padding(20, 10, 20, 10),
+            Height = 56,
+            BackColor = Color.FromArgb(32, 33, 36),
+            Padding = new Padding(18, 10, 18, 10),
             FlowDirection = FlowDirection.RightToLeft,
             WrapContents = false
         };
@@ -180,8 +139,8 @@ public sealed class BulkTitleEditorDialog : Form
             Width = 90,
             Height = 36,
             BorderRadius = 7,
-            FillColor = Color.FromArgb(235, 237, 242),
-            ForeColor = Color.FromArgb(70, 70, 85),
+            FillColor = Color.FromArgb(63, 63, 70),
+            ForeColor = Color.FromArgb(228, 228, 231),
             Font = new Font("Segoe UI Semibold", 9F),
             Cursor = Cursors.Hand,
             Margin = new Padding(6, 0, 0, 0)
@@ -194,7 +153,7 @@ public sealed class BulkTitleEditorDialog : Form
             Width = 145,
             Height = 36,
             BorderRadius = 7,
-            FillColor = Color.FromArgb(0, 161, 112),
+            FillColor = Color.FromArgb(16, 185, 129),
             ForeColor = Color.White,
             Font = new Font("Segoe UI Semibold", 9F),
             Cursor = Cursors.Hand
@@ -203,47 +162,118 @@ public sealed class BulkTitleEditorDialog : Form
 
         pnlBottom.Controls.AddRange([btnCancel, btnSave]);
 
-        // Dock layout: Fill phải ở dưới Bottom và Top
-        Controls.Add(_grid);
+        // Add controls to Form
+        Controls.Add(pnlEditor);
         Controls.Add(pnlBottom);
         Controls.Add(pnlToolbar);
         Controls.Add(pnlHeader);
-        _grid.SendToBack();
+        pnlEditor.BringToFront();
+
+        UpdateLineCount();
     }
 
-    private void PasteTitlesFromClipboard()
+    private void UpdateLineCount()
+    {
+        var lines = GetLines();
+        var count = lines.Count;
+        var target = _items.Count;
+
+        if (count == target)
+        {
+            _lblLineCount.Text = $"✔ {count} / {target} dòng (khớp đủ video)";
+            _lblLineCount.ForeColor = Color.FromArgb(52, 211, 153);
+        }
+        else if (count < target)
+        {
+            _lblLineCount.Text = $"⚠️ {count} / {target} dòng (thiếu {target - count} dòng)";
+            _lblLineCount.ForeColor = Color.FromArgb(251, 191, 36);
+        }
+        else
+        {
+            _lblLineCount.Text = $"ℹ️ {count} / {target} dòng (thừa {count - target} dòng)";
+            _lblLineCount.ForeColor = Color.FromArgb(96, 165, 250);
+        }
+    }
+
+    private List<string> GetLines()
+    {
+        var raw = _txtTitles.Text ?? string.Empty;
+        var lines = raw.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None).ToList();
+        return lines;
+    }
+
+    private async Task GenerateAiTitlesAsync()
+    {
+        if (_isGeneratingAi) return;
+
+        var aiConfigService = new AiConfigService();
+        var config = aiConfigService.Load();
+        if (string.IsNullOrWhiteSpace(config.ApiKey) || string.IsNullOrWhiteSpace(config.ApiEndpoint))
+        {
+            MessageBox.Show(this, "Chưa cấu hình API AI (Endpoint / API Key).\nVui lòng cấu hình API Key trong mục Cài đặt trước khi dùng tính năng này.", "Chưa có API AI", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var lines = GetLines();
+        while (lines.Count < _items.Count) lines.Add(string.Empty);
+
+        _isGeneratingAi = true;
+        _btnAiGenerate.Enabled = false;
+        _btnAiGenerate.FillColor = Color.FromArgb(107, 114, 128);
+
+        try
+        {
+            var aiService = new AiTitleService();
+            for (int i = 0; i < _items.Count; i++)
+            {
+                var (videoPath, currentTitle) = _items[i];
+                var sourceTitle = !string.IsNullOrWhiteSpace(lines[i]) ? lines[i] : (!string.IsNullOrWhiteSpace(currentTitle) ? currentTitle : Path.GetFileNameWithoutExtension(videoPath.Split(';').FirstOrDefault()?.Trim() ?? videoPath));
+
+                _btnAiGenerate.Text = $"⏳ Đang tạo AI ({i + 1}/{_items.Count})...";
+
+                try
+                {
+                    var generated = await aiService.GenerateTitleAsync(config, sourceTitle);
+                    if (!string.IsNullOrWhiteSpace(generated))
+                    {
+                        lines[i] = generated.Trim();
+                        _txtTitles.Text = string.Join(Environment.NewLine, lines);
+                    }
+                }
+                catch { }
+            }
+        }
+        finally
+        {
+            _isGeneratingAi = false;
+            _btnAiGenerate.Enabled = true;
+            _btnAiGenerate.Text = "✨ Tạo tiêu đề AI";
+            _btnAiGenerate.FillColor = Color.FromArgb(147, 51, 234);
+            UpdateLineCount();
+        }
+    }
+
+    private void PasteFromClipboard()
     {
         try
         {
-            if (!Clipboard.ContainsText())
-            {
-                MessageBox.Show(this, "Clipboard không có văn bản nào.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
+            if (!Clipboard.ContainsText()) return;
             var text = Clipboard.GetText();
-            var lines = text.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None)
-                .Select(l => l.Trim())
-                .ToList();
+            if (string.IsNullOrWhiteSpace(text)) return;
 
-            // Bỏ các dòng trống ở cuối nếu có
-            while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[^1]))
-                lines.RemoveAt(lines.Count - 1);
-
-            if (lines.Count == 0)
+            var selStart = _txtTitles.SelectionStart;
+            if (_txtTitles.SelectionLength > 0)
             {
-                MessageBox.Show(this, "Nội dung trong Clipboard trống.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
+                _txtTitles.SelectedText = text;
             }
-
-            var applyCount = Math.Min(lines.Count, _grid.Rows.Count);
-            for (int i = 0; i < applyCount; i++)
+            else if (string.IsNullOrWhiteSpace(_txtTitles.Text))
             {
-                _grid.Rows[i].Cells["colTitle"].Value = lines[i];
+                _txtTitles.Text = text;
             }
-
-            _lblInfo.Text = $"Đã dán {applyCount} / {_grid.Rows.Count} tiêu đề";
-            _lblInfo.ForeColor = Color.FromArgb(0, 161, 112);
+            else
+            {
+                _txtTitles.Paste();
+            }
         }
         catch (Exception ex)
         {
@@ -251,16 +281,15 @@ public sealed class BulkTitleEditorDialog : Form
         }
     }
 
-    private void ResetTitlesToFileName()
+    private void ResetToFileName()
     {
-        for (int i = 0; i < _grid.Rows.Count; i++)
+        var lines = _items.Select(i =>
         {
-            var rawPath = _grid.Rows[i].Tag as string ?? "";
-            var firstFile = rawPath.Split(';').FirstOrDefault()?.Trim() ?? "";
-            var fileName = !string.IsNullOrWhiteSpace(firstFile) ? Path.GetFileNameWithoutExtension(firstFile) : "";
-            _grid.Rows[i].Cells["colTitle"].Value = fileName;
-        }
-        _lblInfo.Text = $"Đã đặt lại {_grid.Rows.Count} tiêu đề theo tên file";
+            var firstFile = i.VideoPath.Split(';').FirstOrDefault()?.Trim() ?? i.VideoPath;
+            return !string.IsNullOrWhiteSpace(firstFile) ? Path.GetFileNameWithoutExtension(firstFile) : "";
+        }).ToList();
+
+        _txtTitles.Text = string.Join(Environment.NewLine, lines);
     }
 
     private void PromptAddSuffix()
@@ -273,16 +302,18 @@ public sealed class BulkTitleEditorDialog : Form
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
             MinimizeBox = false,
-            BackColor = Color.White
+            BackColor = Color.FromArgb(32, 33, 36),
+            ForeColor = Color.White
         };
 
         var lbl = new Label
         {
-            Text = "Nhập nội dung cần thêm vào cuối mỗi tiêu đề (ví dụ: #shopee #review):",
+            Text = "Nhập nội dung cần thêm vào cuối mỗi dòng tiêu đề (ví dụ: #shopee #review):",
             AutoSize = false,
             Size = new Size(380, 36),
             Location = new Point(16, 14),
-            Font = new Font("Segoe UI", 9F)
+            Font = new Font("Segoe UI", 9F),
+            ForeColor = Color.FromArgb(220, 225, 235)
         };
         var txt = new Guna2TextBox
         {
@@ -300,7 +331,7 @@ public sealed class BulkTitleEditorDialog : Form
             Height = 32,
             Location = new Point(296, 102),
             BorderRadius = 6,
-            FillColor = Color.FromArgb(79, 70, 229),
+            FillColor = Color.FromArgb(16, 185, 129),
             Font = new Font("Segoe UI Semibold", 8.5F),
             Cursor = Cursors.Hand
         };
@@ -312,35 +343,35 @@ public sealed class BulkTitleEditorDialog : Form
         if (prompt.ShowDialog(this) == DialogResult.OK && !string.IsNullOrWhiteSpace(txt.Text))
         {
             var suffix = txt.Text.Trim();
-            for (int i = 0; i < _grid.Rows.Count; i++)
+            var lines = GetLines();
+            for (int i = 0; i < lines.Count; i++)
             {
-                var cur = Convert.ToString(_grid.Rows[i].Cells["colTitle"].Value) ?? "";
+                var cur = lines[i]?.Trim() ?? "";
                 if (string.IsNullOrWhiteSpace(cur))
-                    _grid.Rows[i].Cells["colTitle"].Value = suffix;
+                    lines[i] = suffix;
                 else if (!cur.Contains(suffix, StringComparison.OrdinalIgnoreCase))
-                    _grid.Rows[i].Cells["colTitle"].Value = $"{cur} {suffix}";
+                    lines[i] = $"{cur} {suffix}";
             }
+            _txtTitles.Text = string.Join(Environment.NewLine, lines);
         }
     }
 
-    private void ClearAllTitles()
+    private void ClearAll()
     {
-        for (int i = 0; i < _grid.Rows.Count; i++)
-        {
-            _grid.Rows[i].Cells["colTitle"].Value = string.Empty;
-        }
-        _lblInfo.Text = "Đã xóa trắng tất cả tiêu đề";
-        _lblInfo.ForeColor = Color.FromArgb(180, 50, 50);
+        _txtTitles.Clear();
     }
 
     private void SaveAndApply()
     {
-        _grid.EndEdit();
+        var lines = GetLines();
         ResultTitles.Clear();
-        for (int i = 0; i < _grid.Rows.Count; i++)
+
+        for (int i = 0; i < _items.Count; i++)
         {
-            ResultTitles.Add(Convert.ToString(_grid.Rows[i].Cells["colTitle"].Value)?.Trim() ?? string.Empty);
+            var val = i < lines.Count ? lines[i].Trim() : string.Empty;
+            ResultTitles.Add(val);
         }
+
         DialogResult = DialogResult.OK;
         Close();
     }
@@ -351,9 +382,9 @@ public sealed class BulkTitleEditorDialog : Form
         {
             Text = text,
             Width = width,
-            Height = 34,
+            Height = 32,
             FillColor = color,
-            BorderRadius = 7,
+            BorderRadius = 6,
             Font = new Font("Segoe UI Semibold", 8.5F),
             ForeColor = Color.White,
             Cursor = Cursors.Hand,

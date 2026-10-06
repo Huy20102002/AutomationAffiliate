@@ -598,7 +598,7 @@ public sealed class ProductEditorDialog : Form
         };
         contextMenu.Items.Add(menuPlayVideo);
 
-        var menuEditTitles = new ToolStripMenuItem("📝 Sửa danh sách tiêu đề các dòng đã chọn...");
+        var menuEditTitles = new ToolStripMenuItem("📝 Sửa danh sách tiêu đề / AI các dòng đã chọn...");
         menuEditTitles.Click += (_, _) =>
         {
             var targetRows = _bulkGrid.SelectedRows.Count > 0
@@ -718,11 +718,11 @@ public sealed class ProductEditorDialog : Form
         // ── Buttons ──
         var buttons = CreateButtonPanel(_isBulkEditMode ? "Lưu thay đổi" : "Thêm tất cả", _isBulkEditMode ? 140 : 130);
 
-        Controls.Add(_bulkGrid);
-        Controls.Add(buttons);
         Controls.Add(hashBar);
         Controls.Add(toolbar);
-        _bulkGrid.SendToBack();
+        Controls.Add(buttons);
+        Controls.Add(_bulkGrid);
+        _bulkGrid.BringToFront();
     }
 
     // ═══════════════════════════════════════════════════════

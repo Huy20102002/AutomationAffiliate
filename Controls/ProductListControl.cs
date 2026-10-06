@@ -623,7 +623,7 @@ public sealed class ProductListControl : UserControl
         itemEdit.Click += (_, _) => EditRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(itemEdit);
 
-        var itemEditTitles = new ToolStripMenuItem(count > 1 ? $"📝 Sửa danh sách tiêu đề ({count} video)..." : "📝 Sửa tiêu đề...")
+        var itemEditTitles = new ToolStripMenuItem(count > 1 ? $"📝 Sửa danh sách tiêu đề / AI ({count} video)..." : "📝 Sửa tiêu đề / AI...")
         {
             Font = new Font("Segoe UI Semibold", 9.5F),
             ForeColor = Color.FromArgb(10, 151, 205)
