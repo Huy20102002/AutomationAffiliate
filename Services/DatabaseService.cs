@@ -136,6 +136,30 @@ public class DatabaseService
         connection.Execute("CREATE INDEX IF NOT EXISTS IX_Jobs_Status ON Jobs(Status);");
         connection.Execute("CREATE INDEX IF NOT EXISTS IX_Jobs_ShopeeStatus ON Jobs(ShopeeStatus);");
         connection.Execute("CREATE INDEX IF NOT EXISTS IX_Jobs_FbStatus ON Jobs(FbStatus);");
+
+        var createAffiliateLinksTable = @"
+            CREATE TABLE IF NOT EXISTS AffiliateLinks (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Name TEXT NOT NULL,
+                Url TEXT NOT NULL,
+                ImagePath TEXT,
+                ImageHash TEXT,
+                Notes TEXT,
+                CreatedAt TEXT NOT NULL,
+                UpdatedAt TEXT NOT NULL,
+                SourceKey TEXT
+            );";
+        connection.Execute(createAffiliateLinksTable);
+        var affiliateColumns = connection.Query<string>("SELECT name FROM pragma_table_info('AffiliateLinks')")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!affiliateColumns.Contains("SourceKey"))
+            connection.Execute("ALTER TABLE AffiliateLinks ADD COLUMN SourceKey TEXT;");
+        MigrateLegacyAffiliateLinkRows(connection);
+        connection.Execute("CREATE INDEX IF NOT EXISTS IX_AffiliateLinks_Name ON AffiliateLinks(Name);");
+        connection.Execute("CREATE INDEX IF NOT EXISTS IX_AffiliateLinks_Url ON AffiliateLinks(Url);");
+        connection.Execute("CREATE INDEX IF NOT EXISTS IX_AffiliateLinks_ImageHash ON AffiliateLinks(ImageHash);");
+        connection.Execute("CREATE INDEX IF NOT EXISTS IX_AffiliateLinks_SourceKey ON AffiliateLinks(SourceKey);");
+        ImportAffiliateLinksFromJobs(connection);
     }
 
     private static void EnsureColumn(IDbConnection connection, ISet<string> columns, string name, string definition)
@@ -390,6 +414,202 @@ public class DatabaseService
             transaction.Rollback();
             throw;
         }
+    }
+
+    public List<AffiliateLinkItem> GetAllAffiliateLinks()
+    {
+        using var connection = CreateConnection();
+        return connection.Query<AffiliateLinkItem>(
+            "SELECT * FROM AffiliateLinks ORDER BY UpdatedAt DESC, Id DESC").ToList();
+    }
+
+    /// <summary>
+    /// Đồng bộ các link đã có trong Dữ liệu &amp; công việc sang kho Link AFF.
+    /// Hàm có thể gọi nhiều lần; URL đã tồn tại sẽ không bị nhân đôi.
+    /// </summary>
+    public int ImportAffiliateLinksFromJobs()
+    {
+        using var connection = CreateConnection();
+        connection.Open();
+        return ImportAffiliateLinksFromJobs(connection);
+    }
+
+    private static int ImportAffiliateLinksFromJobs(IDbConnection connection)
+    {
+        var existingItems = connection.Query<AffiliateLinkItem>("SELECT * FROM AffiliateLinks").ToList();
+        var existingSourceKeys = existingItems
+            .Where(item => !string.IsNullOrWhiteSpace(item.SourceKey))
+            .Select(item => item.SourceKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var existingLinkSets = existingItems
+            .Select(item => BuildCanonicalLinkSet(item.GetUrls()))
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var jobs = connection.Query<JobItem>(@"
+            SELECT * FROM Jobs
+            WHERE ShopeeAffLink IS NOT NULL AND TRIM(ShopeeAffLink) <> ''
+            ORDER BY Id").ToList();
+        var jobGroups = jobs
+            .Select(job => new
+            {
+                Job = job,
+                Urls = job.GetShopeeAffLinks()
+                    .Select(NormalizeAffiliateUrl)
+                    .Where(url => !string.IsNullOrWhiteSpace(url))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+            })
+            .Where(entry => entry.Urls.Count > 0)
+            .GroupBy(entry => BuildCanonicalLinkSet(entry.Urls), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var imported = 0;
+        using var transaction = connection.BeginTransaction();
+        try
+        {
+            const string insertSql = @"
+                INSERT INTO AffiliateLinks (Name, Url, ImagePath, ImageHash, Notes, CreatedAt, UpdatedAt, SourceKey)
+                VALUES (@Name, @Url, @ImagePath, @ImageHash, @Notes, @CreatedAt, @UpdatedAt, @SourceKey);";
+
+            foreach (var group in jobGroups)
+            {
+                var sourceKey = BuildAffiliateSourceKey(group.Key);
+                if (existingSourceKeys.Contains(sourceKey) || existingLinkSets.Contains(group.Key)) continue;
+
+                var entries = group.ToList();
+                var representative = entries[0];
+                var imagePath = entries.Select(entry => TryResolveJobImage(entry.Job))
+                    .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path)) ?? string.Empty;
+                var imageHash = string.Empty;
+                if (!string.IsNullOrWhiteSpace(imagePath))
+                {
+                    try { imageHash = ImageSimilarity.ComputeDifferenceHash(imagePath); }
+                    catch { imagePath = string.Empty; }
+                }
+
+                var ids = entries.Select(entry => entry.Job.Id).Distinct().ToList();
+                var displayedIds = string.Join(", ", ids.Take(8));
+                if (ids.Count > 8) displayedIds += $", +{ids.Count - 8}";
+                var now = DateTime.Now.ToString("O");
+                connection.Execute(insertSql, new AffiliateLinkItem
+                {
+                    Name = BuildAffiliateLinkName(representative.Job),
+                    Url = string.Join(Environment.NewLine, representative.Urls),
+                    ImagePath = imagePath,
+                    ImageHash = imageHash,
+                    Notes = $"Đồng bộ từ {ids.Count} công việc · ID {displayedIds}",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    SourceKey = sourceKey
+                }, transaction);
+                existingSourceKeys.Add(sourceKey);
+                existingLinkSets.Add(group.Key);
+                imported++;
+            }
+
+            transaction.Commit();
+            if (imported > 0)
+                Logger.Info($"Đã đồng bộ {imported} Link AFF từ dữ liệu công việc cũ.");
+            return imported;
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
+    }
+
+    private static string NormalizeAffiliateUrl(string? url)
+        => (url ?? string.Empty).Trim().TrimEnd('/', ' ', '\t', '\r', '\n');
+
+    private static string BuildCanonicalLinkSet(IEnumerable<string> urls)
+        => string.Join("\n", urls.Select(NormalizeAffiliateUrl)
+            .Where(url => !string.IsNullOrWhiteSpace(url))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(url => url, StringComparer.OrdinalIgnoreCase));
+
+    private static string BuildAffiliateSourceKey(string canonicalLinkSet)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(canonicalLinkSet.ToLowerInvariant());
+        return "jobs:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+    }
+
+    private static string BuildAffiliateLinkName(JobItem job)
+    {
+        var name = !string.IsNullOrWhiteSpace(job.Title)
+            ? job.Title.Trim()
+            : Path.GetFileNameWithoutExtension(job.VideoPath)?.Trim();
+        if (string.IsNullOrWhiteSpace(name)) name = $"Link AFF #{job.Id}";
+        if (name.Length > 140) name = name[..137].TrimEnd() + "...";
+        return name;
+    }
+
+    private static void MigrateLegacyAffiliateLinkRows(IDbConnection connection)
+    {
+        // Bản đầu tiên của module đã tách mỗi URL thành một dòng. Chỉ xóa đúng
+        // các dòng đồng bộ tự động kiểu cũ để nhập lại theo nhóm sản phẩm.
+        connection.Execute(@"
+            DELETE FROM AffiliateLinks
+            WHERE (SourceKey IS NULL OR TRIM(SourceKey) = '')
+              AND Notes LIKE 'Đồng bộ từ Dữ liệu & công việc · ID %';");
+    }
+
+    private static string TryResolveJobImage(JobItem job)
+    {
+        var candidates = new List<string>();
+        foreach (var key in new[] { "ImagePath", "Image", "Ảnh", "Anh" })
+        {
+            if (job.Data.TryGetValue(key, out var path) && !string.IsNullOrWhiteSpace(path))
+                candidates.Add(path);
+        }
+        if (!string.IsNullOrWhiteSpace(job.VideoPath)) candidates.Add(job.VideoPath);
+
+        var imageExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"
+        };
+        return candidates.FirstOrDefault(path =>
+            File.Exists(path) && imageExtensions.Contains(Path.GetExtension(path))) ?? string.Empty;
+    }
+
+    public void SaveAffiliateLink(AffiliateLinkItem item)
+    {
+        using var connection = CreateConnection();
+        var now = DateTime.Now.ToString("O");
+        if (string.IsNullOrWhiteSpace(item.CreatedAt)) item.CreatedAt = now;
+        item.UpdatedAt = now;
+        item.Id = connection.QuerySingle<int>(@"
+            INSERT INTO AffiliateLinks (Name, Url, ImagePath, ImageHash, Notes, CreatedAt, UpdatedAt, SourceKey)
+            VALUES (@Name, @Url, @ImagePath, @ImageHash, @Notes, @CreatedAt, @UpdatedAt, @SourceKey);
+            SELECT last_insert_rowid();", item);
+    }
+
+    public void UpdateAffiliateLink(AffiliateLinkItem item)
+    {
+        using var connection = CreateConnection();
+        item.UpdatedAt = DateTime.Now.ToString("O");
+        connection.Execute(@"
+            UPDATE AffiliateLinks
+            SET Name = @Name,
+                Url = @Url,
+                ImagePath = @ImagePath,
+                ImageHash = @ImageHash,
+                Notes = @Notes,
+                UpdatedAt = @UpdatedAt,
+                SourceKey = @SourceKey
+            WHERE Id = @Id", item);
+    }
+
+    public void DeleteAffiliateLink(int id)
+    {
+        using var connection = CreateConnection();
+        connection.Execute("DELETE FROM AffiliateLinks WHERE Id = @Id", new { Id = id });
+    }
+
+    public void UpdateAffiliateLinkImageHash(int id, string imageHash)
+    {
+        using var connection = CreateConnection();
+        connection.Execute("UPDATE AffiliateLinks SET ImageHash = @ImageHash WHERE Id = @Id", new { Id = id, ImageHash = imageHash });
     }
 
     public void BackupDatabase(string targetPath)

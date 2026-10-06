@@ -159,6 +159,7 @@ partial class MainForm
     private Button navWorkflow;
     private Button navWorkflowIos;
     private Button navProducts;
+    private Button navAffiliateLinks;
     private Button navDevices;
     private Button navLogs;
 
@@ -201,9 +202,10 @@ partial class MainForm
         navWorkflowIos = CreateNavButton("⌘   Quy trình iPhone", false);
         navWorkflowIos.Visible = false;
         navProducts = CreateNavButton("▦   Dữ liệu & công việc", false);
+        navAffiliateLinks = CreateNavButton("🔗   Link AFF", false);
         navDevices = CreateNavButton("◉   Thiết bị", false);
         navLogs = CreateNavButton("≡   Nhật ký hoạt động", false);
-        nav.Controls.AddRange([navOverview, navWorkflow, navProducts, navDevices, navLogs]);
+        nav.Controls.AddRange([navOverview, navWorkflow, navProducts, navAffiliateLinks, navDevices, navLogs]);
         sidebar.Controls.Add(nav);
 
         var sideCard = new Panel { Location = new Point(16, 500), Size = new Size(204, 100), BackColor = Color.FromArgb(248, 250, 252), Padding = new Padding(12) };

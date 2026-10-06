@@ -26,6 +26,7 @@ public sealed class ProductEditorDialog : Form
     private readonly JobItem? _original;
     private readonly HashSet<string> _existingPaths;
     private readonly List<JobItem> _allProducts = [];
+    private readonly List<AffiliateLinkItem> _affiliateLinks = [];
     private bool _isApplyingLink = false;
     private readonly bool _isEditMode;
     private readonly bool _isBulkEditMode;
@@ -35,12 +36,13 @@ public sealed class ProductEditorDialog : Form
     public List<JobItem> BulkResults { get; } = [];
     public bool IsBulkAdd => BulkResults.Count > 0;
 
-    public ProductEditorDialog(JobItem? product = null, IEnumerable<string>? existingPaths = null, IEnumerable<FolderItem>? folders = null, int defaultFolderId = 0)
+    public ProductEditorDialog(JobItem? product = null, IEnumerable<string>? existingPaths = null, IEnumerable<FolderItem>? folders = null, int defaultFolderId = 0, IEnumerable<AffiliateLinkItem>? affiliateLinks = null)
     {
         _original = product;
         _isEditMode = product != null;
         _existingPaths = new HashSet<string>(existingPaths ?? [], StringComparer.OrdinalIgnoreCase);
         _folders = folders?.ToList() ?? [];
+        _affiliateLinks = affiliateLinks?.ToList() ?? [];
 
         Text = _isEditMode ? "Sửa sản phẩm" : "Thêm sản phẩm";
         StartPosition = FormStartPosition.CenterParent;
@@ -56,18 +58,19 @@ public sealed class ProductEditorDialog : Form
             BuildBulkAddMode(defaultFolderId: defaultFolderId);
     }
 
-    public ProductEditorDialog(IEnumerable<JobItem> allProducts, IEnumerable<FolderItem>? folders = null, int defaultFolderId = 0)
-        : this((JobItem?)null, allProducts, folders, defaultFolderId)
+    public ProductEditorDialog(IEnumerable<JobItem> allProducts, IEnumerable<FolderItem>? folders = null, int defaultFolderId = 0, IEnumerable<AffiliateLinkItem>? affiliateLinks = null)
+        : this((JobItem?)null, allProducts, folders, defaultFolderId, affiliateLinks)
     {
     }
 
-    public ProductEditorDialog(JobItem? product, IEnumerable<JobItem>? allProducts, IEnumerable<FolderItem>? folders, int defaultFolderId = 0)
+    public ProductEditorDialog(JobItem? product, IEnumerable<JobItem>? allProducts, IEnumerable<FolderItem>? folders, int defaultFolderId = 0, IEnumerable<AffiliateLinkItem>? affiliateLinks = null)
     {
         _original = product;
         _isEditMode = product != null;
         _allProducts = allProducts?.ToList() ?? [];
         _existingPaths = new HashSet<string>(_allProducts.Select(j => j.VideoPath), StringComparer.OrdinalIgnoreCase);
         _folders = folders?.ToList() ?? [];
+        _affiliateLinks = affiliateLinks?.ToList() ?? [];
 
         Text = _isEditMode ? "Sửa sản phẩm" : "Thêm sản phẩm";
         StartPosition = FormStartPosition.CenterParent;
@@ -83,7 +86,7 @@ public sealed class ProductEditorDialog : Form
             BuildBulkAddMode(allProducts: _allProducts, defaultFolderId: defaultFolderId);
     }
 
-    public ProductEditorDialog(IReadOnlyList<JobItem> productsToEdit, IEnumerable<JobItem>? allProducts = null, IEnumerable<FolderItem>? folders = null, int defaultFolderId = -1)
+    public ProductEditorDialog(IReadOnlyList<JobItem> productsToEdit, IEnumerable<JobItem>? allProducts = null, IEnumerable<FolderItem>? folders = null, int defaultFolderId = -1, IEnumerable<AffiliateLinkItem>? affiliateLinks = null)
     {
         _original = null;
         _isEditMode = false;
@@ -91,6 +94,7 @@ public sealed class ProductEditorDialog : Form
         _allProducts = allProducts?.ToList() ?? [];
         _existingPaths = new HashSet<string>(_allProducts.Select(j => j.VideoPath), StringComparer.OrdinalIgnoreCase);
         _folders = folders?.ToList() ?? [];
+        _affiliateLinks = affiliateLinks?.ToList() ?? [];
 
         Text = "Sửa nhiều sản phẩm";
         StartPosition = FormStartPosition.CenterParent;
@@ -468,6 +472,20 @@ public sealed class ProductEditorDialog : Form
 
         _bulkGrid.Columns.Add(new DataGridViewTextBoxColumn
         {
+            Name = "colStt",
+            HeaderText = "STT",
+            ReadOnly = true,
+            Width = 50,
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.None,
+            SortMode = DataGridViewColumnSortMode.NotSortable,
+            DefaultCellStyle = new DataGridViewCellStyle
+            {
+                Alignment = DataGridViewContentAlignment.MiddleCenter,
+                ForeColor = Color.FromArgb(120, 125, 145)
+            }
+        });
+        _bulkGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
             Name = "colFile", HeaderText = "File video / ảnh", ReadOnly = true,
             FillWeight = 35, MinimumWidth = 200
         });
@@ -545,25 +563,7 @@ public sealed class ProductEditorDialog : Form
             if (_bulkGrid.Columns[e.ColumnIndex].Name == "colFile")
             {
                 var filePath = _bulkGrid.Rows[e.RowIndex].Cells["colFile"].Value?.ToString();
-                if (!string.IsNullOrWhiteSpace(filePath))
-                {
-                    var targetFile = filePath.Split(';').FirstOrDefault()?.Trim();
-                    if (!string.IsNullOrWhiteSpace(targetFile) && File.Exists(targetFile))
-                    {
-                        try
-                        {
-                            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                            {
-                                FileName = targetFile,
-                                UseShellExecute = true
-                            });
-                        }
-                        catch (Exception ex)
-                        {
-                            MessageBox.Show($"Không thể mở file: {ex.Message}", "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        }
-                    }
-                }
+                MediaHelper.PlayOrOpenMedia(filePath, this);
             }
         };
 
@@ -588,6 +588,41 @@ public sealed class ProductEditorDialog : Form
         };
 
         var contextMenu = new ContextMenuStrip { Font = new Font("Segoe UI", 9F) };
+
+        var menuPlayVideo = new ToolStripMenuItem("🎬 Mở / Xem video (Double click)");
+        menuPlayVideo.Click += (_, _) =>
+        {
+            var curRow = _bulkGrid.CurrentRow ?? (_bulkGrid.SelectedRows.Count > 0 ? _bulkGrid.SelectedRows[0] : null);
+            var path = curRow?.Cells["colFile"].Value?.ToString();
+            MediaHelper.PlayOrOpenMedia(path, this);
+        };
+        contextMenu.Items.Add(menuPlayVideo);
+
+        var menuEditTitles = new ToolStripMenuItem("📝 Sửa danh sách tiêu đề các dòng đã chọn...");
+        menuEditTitles.Click += (_, _) =>
+        {
+            var targetRows = _bulkGrid.SelectedRows.Count > 0
+                ? _bulkGrid.SelectedRows.Cast<DataGridViewRow>().OrderBy(r => r.Index).ToList()
+                : _bulkGrid.Rows.Cast<DataGridViewRow>().Where(r => r.Visible).ToList();
+            if (targetRows.Count == 0) return;
+
+            var items = targetRows.Select(r => (
+                Convert.ToString(r.Cells["colFile"].Value) ?? "",
+                Convert.ToString(r.Cells["colTitle"].Value) ?? ""
+            )).ToList();
+
+            using var dlg = new BulkTitleEditorDialog(items);
+            if (dlg.ShowDialog(this) == DialogResult.OK && dlg.ResultTitles.Count == targetRows.Count)
+            {
+                for (int i = 0; i < targetRows.Count; i++)
+                {
+                    targetRows[i].Cells["colTitle"].Value = dlg.ResultTitles[i];
+                }
+            }
+        };
+        contextMenu.Items.Add(menuEditTitles);
+
+        contextMenu.Items.Add(new ToolStripSeparator());
 
         var menuCopyCell = new ToolStripMenuItem("📋 Sao chép ô đang chọn (Ctrl+C)");
         menuCopyCell.Click += (_, _) => CopyBulkGridContent();
@@ -674,7 +709,7 @@ public sealed class ProductEditorDialog : Form
         if (editItems != null)
         {
             foreach (var item in editItems)
-                _bulkGrid.Rows.Add(item.VideoPath, item.Title, item.ShopeeAffLink);
+                _bulkGrid.Rows.Add(_bulkGrid.Rows.Count + 1, item.VideoPath, item.Title, item.ShopeeAffLink);
             RefreshBulkLinkPicker(allProducts);
             HighlightCrossCampaignDuplicates();
             UpdateFileCount(0);
@@ -683,10 +718,11 @@ public sealed class ProductEditorDialog : Form
         // ── Buttons ──
         var buttons = CreateButtonPanel(_isBulkEditMode ? "Lưu thay đổi" : "Thêm tất cả", _isBulkEditMode ? 140 : 130);
 
-        Controls.Add(buttons);
         Controls.Add(_bulkGrid);
+        Controls.Add(buttons);
         Controls.Add(hashBar);
         Controls.Add(toolbar);
+        _bulkGrid.SendToBack();
     }
 
     // ═══════════════════════════════════════════════════════
@@ -735,7 +771,7 @@ public sealed class ProductEditorDialog : Form
             // Chỉ skip nếu đã có trong grid hiện tại (tránh thêm 2 lần cùng 1 file)
             if (existingInGrid.Contains(file)) { skippedInGrid++; continue; }
             var title = _chkUseFileName?.Checked == true ? Path.GetFileNameWithoutExtension(file) : "";
-            _bulkGrid.Rows.Add(file, title, "");
+            _bulkGrid.Rows.Add(_bulkGrid.Rows.Count + 1, file, title, "");
             existingInGrid.Add(file);
             added++;
         }
@@ -776,7 +812,7 @@ public sealed class ProductEditorDialog : Form
 
         var firstFile = selectedFiles[0];
         var title = _chkUseFileName?.Checked == true ? Path.GetFileNameWithoutExtension(firstFile) : "";
-        _bulkGrid.Rows.Add(combinedPath, title, "");
+        _bulkGrid.Rows.Add(_bulkGrid.Rows.Count + 1, combinedPath, title, "");
         HighlightCrossCampaignDuplicates();
         UpdateFileCount(0);
     }
@@ -824,7 +860,7 @@ public sealed class ProductEditorDialog : Form
                 }
 
                 var title = _chkUseFileName?.Checked == true ? Path.GetFileName(sub) : "";
-                _bulkGrid.Rows.Add(combined, title, "");
+                _bulkGrid.Rows.Add(_bulkGrid.Rows.Count + 1, combined, title, "");
                 existingInGrid.Add(combined);
                 added++;
             }
@@ -842,7 +878,7 @@ public sealed class ProductEditorDialog : Form
                 if (!existingInGrid.Contains(combined))
                 {
                     var title = _chkUseFileName?.Checked == true ? Path.GetFileName(rootDir) : "";
-                    _bulkGrid.Rows.Add(combined, title, "");
+                    _bulkGrid.Rows.Add(_bulkGrid.Rows.Count + 1, combined, title, "");
                     added++;
                 }
                 else
@@ -919,7 +955,7 @@ public sealed class ProductEditorDialog : Form
         _bulkLinkPicker.Items.Clear();
         foreach (var item in allLinks)
         {
-            _bulkLinkPicker.Items.Add(item.DisplayText);
+            _bulkLinkPicker.Items.Add(item);
         }
         _bulkLinkPicker.EndUpdate();
     }
@@ -927,20 +963,20 @@ public sealed class ProductEditorDialog : Form
     private void ApplyPickedBulkLink()
     {
         if (_isApplyingLink || _bulkGrid == null || _bulkLinkPicker == null) return;
-        var display = _bulkLinkPicker.SelectedItem?.ToString() ?? _bulkLinkPicker.Text.Trim();
+        var selectedRecord = _bulkLinkPicker.SelectedItem as AffLinkRecord;
+        var display = selectedRecord?.DisplayText ?? _bulkLinkPicker.Text.Trim();
         if (string.IsNullOrWhiteSpace(display)) return;
 
-        var link = ExtractLink(display);
-        if (string.IsNullOrWhiteSpace(link) || !link.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        var link = selectedRecord?.Link ?? NormalizeLinkGroup(display);
+        if (string.IsNullOrWhiteSpace(link))
         {
-            var matched = _bulkLinkPicker.Items.Cast<object>()
-                .Select(o => o.ToString() ?? "")
-                .FirstOrDefault(s => s.IndexOf(display, StringComparison.OrdinalIgnoreCase) >= 0);
+            var matched = _bulkLinkPicker.Items.OfType<AffLinkRecord>()
+                .FirstOrDefault(record => record.DisplayText.IndexOf(display, StringComparison.OrdinalIgnoreCase) >= 0);
             if (matched != null)
-                link = ExtractLink(matched);
+                link = matched.Link;
         }
 
-        if (string.IsNullOrWhiteSpace(link) || !link.StartsWith("http", StringComparison.OrdinalIgnoreCase)) return;
+        if (string.IsNullOrWhiteSpace(link)) return;
 
         try
         {
@@ -958,8 +994,20 @@ public sealed class ProductEditorDialog : Form
         _bulkGrid.Focus();
     }
 
+    private void UpdateBulkSttNumbers()
+    {
+        if (_bulkGrid == null) return;
+        int stt = 1;
+        for (int i = 0; i < _bulkGrid.Rows.Count; i++)
+        {
+            if (!_bulkGrid.Rows[i].IsNewRow)
+                _bulkGrid.Rows[i].Cells["colStt"].Value = stt++;
+        }
+    }
+
     private void UpdateFileCount(int skipped)
     {
+        UpdateBulkSttNumbers();
         var count = _bulkGrid!.Rows.Count;
         _fileCountLabel!.Text = $"{count} bài viết" + (skipped > 0 ? $" ({skipped} trùng, bỏ qua)" : "");
         _fileCountLabel.ForeColor = count > 0 ? Color.FromArgb(0, 161, 112) : Color.FromArgb(140, 145, 165);
@@ -1113,17 +1161,6 @@ public sealed class ProductEditorDialog : Form
             if (!paths.All(File.Exists))
             { ShowWarn("Một hoặc nhiều file video/ảnh không tồn tại."); return; }
 
-            if (_existingPaths.Contains(videoPath) && !string.Equals(_original?.VideoPath, videoPath, StringComparison.OrdinalIgnoreCase))
-            {
-                // Tìm chi tiết trùng ở chiến dịch nào
-                var dups = PathHelper.FindDuplicates(videoPath, _allProducts, _folders);
-                var dupInfo = dups.Count > 0
-                    ? string.Join("\n", dups.Take(5).Select(d => $"  • [{d.FolderName}] {(string.IsNullOrEmpty(d.Title) ? "(không có tiêu đề)" : d.Title)}"))
-                    : "  (chiến dịch không xác định)";
-                var msg = $"⚠️ Đường dẫn này đã tồn tại trong {dups.Count} sản phẩm:\n{dupInfo}\n\nBạn vẫn muốn lưu?";
-                if (MessageBox.Show(this, msg, "Cảnh báo trùng đường dẫn", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
-                    return;
-            }
 
             int? folderId = _original?.FolderId;
             if (_folderPicker?.SelectedItem is FolderItem fi) folderId = fi.Id > 0 ? fi.Id : (fi.Id == 0 ? null : _original?.FolderId);
@@ -1146,8 +1183,8 @@ public sealed class ProductEditorDialog : Form
             if (_bulkGrid == null || _bulkGrid.Rows.Count == 0)
             { ShowWarn("Vui lòng chọn ít nhất 1 video hoặc ảnh."); return; }
 
-            // Kiểm tra và cảnh báo nếu có file trùng cross-campaign
-            if (_allProducts.Count > 0)
+            // Kiểm tra và cảnh báo nếu có file trùng cross-campaign (chỉ khi thêm mới, không check khi sửa)
+            if (!_isBulkEditMode && _allProducts.Count > 0)
             {
                 EnsureDuplicateMap();
                 int dupCount = 0;
@@ -1234,7 +1271,19 @@ public sealed class ProductEditorDialog : Form
         public string Title { get; set; } = string.Empty;
         public string Link { get; set; } = string.Empty;
         public string FolderName { get; set; } = string.Empty;
-        public string DisplayText => string.IsNullOrWhiteSpace(Title) ? Link : $"{Title}  —  {Link}";
+        public string ImagePath { get; set; } = string.Empty;
+        public string ImageHash { get; set; } = string.Empty;
+        public string Source { get; set; } = string.Empty;
+        public int LinkCount => AffiliateLinkItem.ParseUrls(Link).Count;
+        public string DisplayText
+        {
+            get
+            {
+                var linkLabel = LinkCount > 1 ? $"{LinkCount} link" : Link;
+                return string.IsNullOrWhiteSpace(Title) ? linkLabel : $"{Title}  —  {linkLabel}";
+            }
+        }
+        public override string ToString() => DisplayText;
     }
 
     private List<AffLinkRecord> GetAllAvailableAffLinks()
@@ -1242,11 +1291,13 @@ public sealed class ProductEditorDialog : Form
         var result = new List<AffLinkRecord>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        void TryAdd(string? link, string? title, int? folderId = null)
+        void TryAdd(string? link, string? title, int? folderId = null, string? imagePath = null, string? imageHash = null, string? source = null)
         {
-            link = link?.Trim();
-            if (string.IsNullOrWhiteSpace(link) || !link.StartsWith("http", StringComparison.OrdinalIgnoreCase)) return;
-            if (!seen.Add(link)) return;
+            var urls = AffiliateLinkItem.ParseUrls(link);
+            if (urls.Count == 0) return;
+            var canonical = string.Join("\n", urls.OrderBy(url => url, StringComparer.OrdinalIgnoreCase));
+            if (!seen.Add(canonical)) return;
+            link = string.Join(", ", urls);
 
             var folderName = string.Empty;
             if (folderId.HasValue && folderId.Value > 0)
@@ -1259,9 +1310,15 @@ public sealed class ProductEditorDialog : Form
             {
                 Link = link,
                 Title = title?.Trim() ?? string.Empty,
-                FolderName = folderName
+                FolderName = folderName,
+                ImagePath = imagePath ?? string.Empty,
+                ImageHash = imageHash ?? string.Empty,
+                Source = source ?? string.Empty
             });
         }
+
+        foreach (var item in _affiliateLinks)
+            TryAdd(item.Url, item.Name, imagePath: item.ImagePath, imageHash: item.ImageHash, source: "Kho Link AFF");
 
         if (_bulkGrid != null)
         {
@@ -1275,6 +1332,12 @@ public sealed class ProductEditorDialog : Form
         }
 
         return result;
+    }
+
+    private static string NormalizeLinkGroup(string? value)
+    {
+        var urls = AffiliateLinkItem.ParseUrls(value);
+        return urls.Count == 0 ? string.Empty : string.Join(", ", urls);
     }
 
     private void ShowLinkPickerForm()
@@ -1302,8 +1365,8 @@ public sealed class ProductEditorDialog : Form
         using var dlg = new Form
         {
             Text = "🔍 Chọn & Gán Link Tiếp Thị Có Sẵn",
-            Width = 840,
-            Height = 560,
+            Width = 1080,
+            Height = 650,
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.Sizable,
             MinimizeBox = false,
@@ -1316,7 +1379,7 @@ public sealed class ProductEditorDialog : Form
         var pnlHeader = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 88,
+            Height = 96,
             BackColor = Color.White,
             Padding = new Padding(20, 10, 20, 8)
         };
@@ -1334,7 +1397,7 @@ public sealed class ProductEditorDialog : Form
 
         var lblSub = new Label
         {
-            Text = "Tìm kiếm từ những link cũ trong danh sách hoặc nhập/dán link mới bên dưới:",
+            Text = "Chọn từ Kho Link AFF; có thể tìm bằng tên, URL hoặc ảnh sản phẩm.",
             Font = new Font("Segoe UI", 8.5F),
             ForeColor = Color.FromArgb(120, 125, 145),
             Dock = DockStyle.Top,
@@ -1344,7 +1407,7 @@ public sealed class ProductEditorDialog : Form
         var pnlSearchRow = new Panel
         {
             Dock = DockStyle.Bottom,
-            Height = 34,
+            Height = 38,
             Padding = new Padding(0, 2, 0, 0)
         };
 
@@ -1370,8 +1433,35 @@ public sealed class ProductEditorDialog : Form
             Cursor = Cursors.Hand
         };
 
+        var btnSearchImage = new Guna.UI2.WinForms.Guna2Button
+        {
+            Text = "▣ Tìm bằng ảnh",
+            Dock = DockStyle.Right,
+            Width = 125,
+            FillColor = Color.FromArgb(255, 247, 237),
+            ForeColor = Color.FromArgb(194, 65, 12),
+            BorderRadius = 5,
+            Font = new Font("Segoe UI Semibold", 9F),
+            Cursor = Cursors.Hand
+        };
+
+        var btnClearImage = new Guna.UI2.WinForms.Guna2Button
+        {
+            Text = "Bỏ lọc ảnh",
+            Dock = DockStyle.Right,
+            Width = 92,
+            FillColor = Color.FromArgb(243, 244, 246),
+            ForeColor = Color.FromArgb(71, 85, 105),
+            BorderRadius = 5,
+            Font = new Font("Segoe UI Semibold", 8.5F),
+            Cursor = Cursors.Hand,
+            Visible = false
+        };
+
         pnlSearchRow.Controls.Add(txtSearch);
         pnlSearchRow.Controls.Add(btnPasteClip);
+        pnlSearchRow.Controls.Add(btnClearImage);
+        pnlSearchRow.Controls.Add(btnSearchImage);
         pnlHeader.Controls.AddRange([pnlSearchRow, lblSub, lblTitle]);
 
         // Grid
@@ -1402,30 +1492,44 @@ public sealed class ProductEditorDialog : Form
         dgv.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(70, 75, 95);
         dgv.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI Semibold", 9F);
         dgv.ColumnHeadersHeight = 32;
-        dgv.RowTemplate.Height = 28;
+        dgv.RowTemplate.Height = 82;
         dgv.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(249, 250, 253);
+
+        var colImage = new DataGridViewImageColumn
+        {
+            Name = "colImage",
+            HeaderText = "Ảnh",
+            Width = 112,
+            ImageLayout = DataGridViewImageCellLayout.Zoom,
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        };
 
         var colTitle = new DataGridViewTextBoxColumn
         {
             Name = "colTitle",
             HeaderText = "Tên sản phẩm / Tiêu đề",
-            Width = 380,
-            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill
+            Width = 280,
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+            FillWeight = 34
         };
         var colLink = new DataGridViewTextBoxColumn
         {
             Name = "colLink",
             HeaderText = "Link tiếp thị Shopee",
-            Width = 270
+            Width = 360,
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+            FillWeight = 43
         };
         var colFolder = new DataGridViewTextBoxColumn
         {
             Name = "colFolder",
-            HeaderText = "Chiến dịch",
-            Width = 120
+            HeaderText = "Nguồn",
+            Width = 150,
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+            FillWeight = 18
         };
 
-        dgv.Columns.AddRange([colTitle, colLink, colFolder]);
+        dgv.Columns.AddRange([colImage, colTitle, colLink, colFolder]);
         pnlBody.Controls.Add(dgv);
 
         // Footer
@@ -1466,7 +1570,7 @@ public sealed class ProductEditorDialog : Form
 
         var btnApply = new Guna.UI2.WinForms.Guna2Button
         {
-            Text = "Áp dụng link này",
+            Text = "Áp dụng các link",
             Dock = DockStyle.Right,
             Width = 155,
             Height = 34,
@@ -1482,18 +1586,79 @@ public sealed class ProductEditorDialog : Form
 
         dlg.Controls.AddRange([pnlBody, pnlHeader, pnlFooter]);
 
+        var pickerImages = new List<Image>();
+        var searchImageHash = string.Empty;
+
+        Image CreatePickerImage(AffLinkRecord record)
+        {
+            if (!string.IsNullOrWhiteSpace(record.ImagePath) && File.Exists(record.ImagePath))
+            {
+                try { return ImageSimilarity.CreateThumbnail(record.ImagePath, 96, 64); }
+                catch { }
+            }
+
+            var placeholder = new Bitmap(96, 64);
+            using var graphics = Graphics.FromImage(placeholder);
+            graphics.Clear(Color.FromArgb(248, 250, 252));
+            using var pen = new Pen(Color.FromArgb(203, 213, 225));
+            graphics.DrawRectangle(pen, 0, 0, 95, 63);
+            using var font = new Font("Segoe UI", 7.5F);
+            using var brush = new SolidBrush(Color.FromArgb(148, 163, 184));
+            var text = "Chưa có ảnh";
+            var size = graphics.MeasureString(text, font);
+            graphics.DrawString(text, font, brush, (96 - size.Width) / 2, (64 - size.Height) / 2);
+            return placeholder;
+        }
+
+        string FormatPickerLinks(AffLinkRecord record)
+        {
+            var urls = AffiliateLinkItem.ParseUrls(record.Link);
+            if (urls.Count <= 1) return urls.FirstOrDefault() ?? string.Empty;
+            return $"{urls.Count} LINK AFF\n" + string.Join("\n", urls);
+        }
+
         void Populate(string keyword)
         {
             dgv.Rows.Clear();
-            var filtered = string.IsNullOrWhiteSpace(keyword)
-                ? linkRecords
-                : linkRecords.Where(r =>
+            foreach (var oldImage in pickerImages) oldImage.Dispose();
+            pickerImages.Clear();
+
+            if (!string.IsNullOrWhiteSpace(searchImageHash))
+            {
+                foreach (var record in linkRecords.Where(record => string.IsNullOrWhiteSpace(record.ImageHash) && File.Exists(record.ImagePath)))
+                {
+                    try { record.ImageHash = ImageSimilarity.ComputeDifferenceHash(record.ImagePath); }
+                    catch { }
+                }
+            }
+
+            var filtered = linkRecords.Where(r =>
+                (string.IsNullOrWhiteSpace(keyword) ||
                     r.Title.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 ||
                     r.Link.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    r.FolderName.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+                    r.FolderName.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    r.Source.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0) &&
+                (string.IsNullOrWhiteSpace(searchImageHash) ||
+                    ImageSimilarity.HammingDistance(searchImageHash, r.ImageHash) <= 18)).ToList();
 
             foreach (var r in filtered)
-                dgv.Rows.Add(r.Title, r.Link, r.FolderName);
+            {
+                if (string.IsNullOrWhiteSpace(r.ImageHash) && File.Exists(r.ImagePath))
+                {
+                    try { r.ImageHash = ImageSimilarity.ComputeDifferenceHash(r.ImagePath); }
+                    catch { }
+                }
+                var image = CreatePickerImage(r);
+                pickerImages.Add(image);
+                var source = !string.IsNullOrWhiteSpace(r.Source) ? r.Source : r.FolderName;
+                var rowIndex = dgv.Rows.Add(image, r.Title, FormatPickerLinks(r), source);
+                var row = dgv.Rows[rowIndex];
+                row.Tag = r;
+                row.Height = Math.Max(82, 36 + r.LinkCount * 18);
+                row.Cells["colLink"].Style.WrapMode = DataGridViewTriState.True;
+                row.Cells["colLink"].Style.ForeColor = Color.FromArgb(37, 99, 235);
+                row.Cells["colLink"].ToolTipText = string.Join(Environment.NewLine, AffiliateLinkItem.ParseUrls(r.Link));
+            }
 
             if (dgv.Rows.Count > 0)
                 dgv.Rows[0].Selected = true;
@@ -1511,23 +1676,53 @@ public sealed class ProductEditorDialog : Form
             }
         };
 
+        btnSearchImage.Click += (_, _) =>
+        {
+            using var imageDialog = new OpenFileDialog
+            {
+                Title = "Chọn ảnh sản phẩm cần tìm trong Kho Link AFF",
+                Filter = "Tệp ảnh|*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.webp|Tất cả tệp|*.*",
+                CheckFileExists = true
+            };
+            if (imageDialog.ShowDialog(dlg) != DialogResult.OK) return;
+            try
+            {
+                searchImageHash = ImageSimilarity.ComputeDifferenceHash(imageDialog.FileName);
+                btnClearImage.Visible = true;
+                lblSub.Text = $"Đang tìm ảnh giống “{Path.GetFileName(imageDialog.FileName)}” trong Kho Link AFF.";
+                Populate(txtSearch.Text);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(dlg, $"Không thể đọc ảnh: {ex.Message}", "Lỗi ảnh", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        };
+
+        btnClearImage.Click += (_, _) =>
+        {
+            searchImageHash = string.Empty;
+            btnClearImage.Visible = false;
+            lblSub.Text = "Chọn từ Kho Link AFF; có thể tìm bằng tên, URL hoặc ảnh sản phẩm.";
+            Populate(txtSearch.Text);
+        };
+
         void DoApply()
         {
             string chosenLink = string.Empty;
 
             if (dgv.SelectedRows.Count > 0)
             {
-                chosenLink = Convert.ToString(dgv.SelectedRows[0].Cells["colLink"].Value) ?? string.Empty;
+                chosenLink = (dgv.SelectedRows[0].Tag as AffLinkRecord)?.Link ?? string.Empty;
             }
 
             if (string.IsNullOrWhiteSpace(chosenLink))
             {
-                chosenLink = ExtractLink(txtSearch.Text);
+                chosenLink = NormalizeLinkGroup(txtSearch.Text);
             }
 
-            if (string.IsNullOrWhiteSpace(chosenLink) || !chosenLink.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(chosenLink))
             {
-                MessageBox.Show(dlg, "Vui lòng chọn 1 dòng sản phẩm hoặc nhập link hợp lệ.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(dlg, "Vui lòng chọn một sản phẩm trong Kho Link AFF hoặc nhập link hợp lệ.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -1586,6 +1781,9 @@ public sealed class ProductEditorDialog : Form
         }
 
         dlg.ShowDialog(this);
+        dgv.Rows.Clear();
+        foreach (var image in pickerImages) image.Dispose();
+        pickerImages.Clear();
     }
 
     private void AutoMatchLinksForRows(IReadOnlyList<DataGridViewRow> targetRows)
@@ -1970,7 +2168,7 @@ public sealed class ProductEditorDialog : Form
             var file = r.Cells["colFile"].Value?.ToString() ?? "";
             var title = r.Cells["colTitle"].Value?.ToString() ?? "";
             var link = r.Cells["colLink"].Value?.ToString() ?? "";
-            var newIdx = _bulkGrid.Rows.Add(file, title, link);
+            var newIdx = _bulkGrid.Rows.Add(_bulkGrid.Rows.Count + 1, file, title, link);
             newIndices.Add(newIdx);
         }
         _bulkGrid.ClearSelection();

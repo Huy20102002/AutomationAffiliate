@@ -44,6 +44,7 @@ public partial class MainForm : Form
     private TikTokDownloaderControl? _tikTokDownloaderControl;
     private Button? _navSettings;
     private SettingsControl? _settingsControl;
+    private AffiliateLinkControl? _affiliateLinkControl;
     private Control? _activeView;
     private readonly Services.TelegramConfigService _telegramConfigService = new();
     private readonly Services.AiConfigService _aiConfigService = new();
@@ -69,6 +70,7 @@ public partial class MainForm : Form
         try { _dbService.InitializeDatabase(); _ = Task.Run(() => _dbService.CreateDailyBackup()); } catch (Exception ex) { Logger.Error("Lỗi khởi tạo DB", ex); }
         _actionRecorder = new AdbActionRecorder(_adb);
         InitializeComponent();
+        InitializeAffiliateLinkModule();
         InitializeTikTokDownloader();
         InitializeTelegramBot();
         InitializeSettingsModule();
@@ -258,6 +260,7 @@ public partial class MainForm : Form
         navWorkflow.Click += (_, _) => ShowWorkflowView();
         navWorkflowIos.Click += (_, _) => ShowIosWorkflowView();
         navProducts.Click += (_, _) => ShowProductView();
+        navAffiliateLinks.Click += (_, _) => ShowAffiliateLinkView();
         navDevices.Click += (_, _) => ShowDevicesView();
         if (_navTikTok != null) _navTikTok.Click += (_, _) => ShowTikTokDownloaderView();
 
@@ -312,6 +315,7 @@ public partial class MainForm : Form
         productListControl.ImportRequested += (_, _) => ImportExcel();
         productListControl.AddRequested += (_, _) => AddProduct();
         productListControl.EditRequested += (_, _) => EditProduct();
+        productListControl.EditTitlesRequested += (_, _) => EditSelectedProductTitles();
         productListControl.ProductChanged += (_, e) => ApplyProductChange(e);
         productListControl.DeleteRequested += (_, _) => DeleteProduct();
         productListControl.RunWorkflowRequested += async (_, _) => await StartRunAsync();
@@ -2579,7 +2583,7 @@ public partial class MainForm : Form
     {
         var checkedFolders = productListControl.CheckedFolderIds;
         int defaultFolderId = checkedFolders.Count == 1 ? checkedFolders[0] : 0;
-        using var dialog = new ProductEditorDialog(_jobs, _dbService.GetAllFolders(), defaultFolderId);
+        using var dialog = new ProductEditorDialog(_jobs, _dbService.GetAllFolders(), defaultFolderId, _dbService.GetAllAffiliateLinks());
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         var newItems = dialog.IsBulkAdd ? dialog.BulkResults : new List<JobItem> { dialog.Result };
@@ -3099,7 +3103,7 @@ public partial class MainForm : Form
 
             var checkedFolders = productListControl.CheckedFolderIds;
             int defaultFolderId = checkedFolders.Count == 1 ? checkedFolders[0] : -1;
-            using var bulkDialog = new ProductEditorDialog(selectedProducts, _jobs, _dbService.GetAllFolders(), defaultFolderId);
+            using var bulkDialog = new ProductEditorDialog(selectedProducts, _jobs, _dbService.GetAllFolders(), defaultFolderId, _dbService.GetAllAffiliateLinks());
             if (bulkDialog.ShowDialog(this) != DialogResult.OK) return;
 
             for (var i = 0; i < selectedIndices.Count && i < bulkDialog.BulkResults.Count; i++)
@@ -3142,7 +3146,7 @@ public partial class MainForm : Form
         var original = _jobs[index];
         var singleCheckedFolders = productListControl.CheckedFolderIds;
         int singleDefaultFolderId = singleCheckedFolders.Count == 1 ? singleCheckedFolders[0] : 0;
-        using var dialog = new ProductEditorDialog(original, _jobs, _dbService.GetAllFolders(), singleDefaultFolderId);
+        using var dialog = new ProductEditorDialog(original, _jobs, _dbService.GetAllFolders(), singleDefaultFolderId, _dbService.GetAllAffiliateLinks());
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         var updated = dialog.Result;
@@ -3157,6 +3161,50 @@ public partial class MainForm : Form
         SaveAutoSavedWorkflow();
         SetStatus("Đã cập nhật sản phẩm");
     }
+
+    private void EditSelectedProductTitles()
+    {
+        var selectedIndices = productListControl.SelectedIndices;
+        if (selectedIndices.Count == 0)
+        {
+            ShowError("Vui lòng chọn ít nhất một video để sửa tiêu đề.");
+            return;
+        }
+
+        var targetJobs = selectedIndices
+            .Where(i => i >= 0 && i < _jobs.Count)
+            .Select(i => _jobs[i])
+            .ToList();
+        if (targetJobs.Count == 0) return;
+
+        var items = targetJobs.Select(j => (j.VideoPath, j.Title)).ToList();
+        using var dialog = new Controls.BulkTitleEditorDialog(items);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        if (dialog.ResultTitles.Count != targetJobs.Count) return;
+
+        var updatedJobs = new List<JobItem>();
+        for (int i = 0; i < targetJobs.Count; i++)
+        {
+            var job = targetJobs[i];
+            var newTitle = dialog.ResultTitles[i];
+            if (job.Title != newTitle)
+            {
+                job.Title = newTitle;
+                job.IsAiTitleGenerated = false;
+                updatedJobs.Add(job);
+            }
+        }
+
+        if (updatedJobs.Count > 0)
+        {
+            _dbService.UpdateJobs(updatedJobs);
+            RefreshJobGrid();
+            SaveAutoSavedWorkflow();
+            SetStatus($"Đã cập nhật tiêu đề cho {updatedJobs.Count} video");
+        }
+    }
+
     private void DeleteProduct()
     {
         var selectedIndices = productListControl.SelectedIndices;
@@ -3728,6 +3776,27 @@ public partial class MainForm : Form
         viewHost.Controls.Add(_tikTokDownloaderControl);
     }
 
+    private void InitializeAffiliateLinkModule()
+    {
+        _affiliateLinkControl = new AffiliateLinkControl(_dbService)
+        {
+            Visible = false
+        };
+        _affiliateLinkControl.StatusChanged += (_, message) => SetStatus(message);
+        viewHost.Controls.Add(_affiliateLinkControl);
+    }
+
+    private void ShowAffiliateLinkView()
+    {
+        _iosPlaceholderLabel?.Hide();
+        if (_affiliateLinkControl == null) return;
+
+        _affiliateLinkControl.RefreshData();
+        ShowAnimatedView(_affiliateLinkControl);
+        SetActiveNavButton(navAffiliateLinks);
+        SetStatus("Kho Link AFF · tìm kiếm bằng từ khóa hoặc hình ảnh");
+    }
+
     private void InitializeSettingsModule()
     {
         var navPanel = sidebar.Controls.OfType<FlowLayoutPanel>().FirstOrDefault();
@@ -4161,7 +4230,7 @@ public partial class MainForm : Form
     private void SetActiveNavButton(Button activeButton)
     {
         var primary = Color.FromArgb(79, 70, 229);
-        foreach (var button in new Button?[] { navOverview, navWorkflow, navWorkflowIos, navProducts, navDevices, navLogs, _navTikTok, _navSettings })
+        foreach (var button in new Button?[] { navOverview, navWorkflow, navWorkflowIos, navProducts, navAffiliateLinks, navDevices, navLogs, _navTikTok, _navSettings })
         {
             if (button == null) continue;
             var isActive = button == activeButton;
@@ -4227,9 +4296,11 @@ public partial class MainForm : Form
         }
 
         List<Models.JobItem> jobsToRun = [];
-        if (onlySelected || folderId == -2) // Run selected rows
+        bool runSelected = onlySelected || selectedIndices.Count > 1 || folderId == -2;
+        if (runSelected && selectedIndices.Count > 0) // Run selected rows
         {
             jobsToRun = selectedIndices.Where(i => i >= 0 && i < _jobs.Count).Select(i => _jobs[i]).ToList();
+            SetStatus($"Đang chạy {jobsToRun.Count} video đã chọn...");
         }
         else if (folderId == -1) // All campaigns
         {

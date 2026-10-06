@@ -1,3 +1,4 @@
+using ShopeeVideoUploader.Helpers;
 using ShopeeVideoUploader.Models;
 
 namespace ShopeeVideoUploader.Controls;
@@ -20,6 +21,7 @@ public sealed class ProductListControl : UserControl
     public event EventHandler? ImportRequested;
     public event EventHandler? AddRequested;
     public event EventHandler? EditRequested;
+    public event EventHandler? EditTitlesRequested;
     public event EventHandler? DeleteRequested;
     public event EventHandler? RunWorkflowRequested;
     public event EventHandler? RunSelectedWorkflowRequested;
@@ -201,7 +203,13 @@ public sealed class ProductListControl : UserControl
         btnAdd.Click += (_, _) => AddRequested?.Invoke(this, EventArgs.Empty);
         btnEdit.Click += (_, _) => EditRequested?.Invoke(this, EventArgs.Empty);
         btnDelete.Click += (_, _) => DeleteRequested?.Invoke(this, EventArgs.Empty);
-        _btnRun.Click += (_, _) => RunWorkflowRequested?.Invoke(this, EventArgs.Empty);
+        _btnRun.Click += (_, _) =>
+        {
+            if (SelectedIndices.Count > 1)
+                RunSelectedWorkflowRequested?.Invoke(this, EventArgs.Empty);
+            else
+                RunWorkflowRequested?.Invoke(this, EventArgs.Empty);
+        };
         _btnStop.Click += (_, _) => StopWorkflowRequested?.Invoke(this, EventArgs.Empty);
         btnReset.Click += (_, _) => ResetStatusesRequested?.Invoke(this, EventArgs.Empty);
         btnWorkflow.Click += (_, _) => WorkflowRequested?.Invoke(this, EventArgs.Empty);
@@ -273,6 +281,21 @@ public sealed class ProductListControl : UserControl
             Font = new Font("Segoe UI", 10F)
         };
         _grid.RowTemplate.Height = 48;
+        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "STT",
+            HeaderText = "STT",
+            Width = 52,
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.None,
+            ReadOnly = true,
+            SortMode = DataGridViewColumnSortMode.NotSortable,
+            DefaultCellStyle = new DataGridViewCellStyle
+            {
+                Alignment = DataGridViewContentAlignment.MiddleCenter,
+                ForeColor = Color.FromArgb(120, 125, 145),
+                Font = new Font("Segoe UI Semibold", 9F)
+            }
+        });
         AddColumn("VideoPath", "Đường dẫn video / ảnh", 20F);
         AddColumn("Title", "Tiêu đề", 42F);
         AddColumn("ShopeeAffLink", "Link tiếp thị", 20F);
@@ -302,6 +325,7 @@ public sealed class ProductListControl : UserControl
         _grid.CellEndEdit += GridCellEndEdit;
         _grid.CellDoubleClick += GridCellDoubleClick;
         _grid.MouseDown += GridMouseDown;
+        _grid.SelectionChanged += (_, _) => UpdateRunButtonText();
         _grid.DataError += (_, e) => e.ThrowException = false;
         _grid.KeyDown += (s, e) =>
         {
@@ -391,10 +415,14 @@ public sealed class ProductListControl : UserControl
                 productsToDisplay = productsToDisplay.OrderBy(x => x.Product.VideoPath).ToList();
             }
 
-            foreach (var item in productsToDisplay)
+            for (int i = 0; i < productsToDisplay.Count; i++)
             {
-                AddProductRow(item.OriginalIndex, item.Product);
+                AddProductRow(i + 1, productsToDisplay[i].OriginalIndex, productsToDisplay[i].Product);
             }
+
+            _grid.ClearSelection();
+            _grid.CurrentCell = null;
+            UpdateRunButtonText();
 
             if (_lblSearchCount != null)
             {
@@ -501,15 +529,29 @@ public sealed class ProductListControl : UserControl
         }
     }
 
-    private void AddProductRow(int originalIndex, JobItem product)
+    private void AddProductRow(int stt, int originalIndex, JobItem product)
     {
-        var rowIndex = _grid.Rows.Add(product.VideoPath, product.Title, product.ShopeeAffLink, product.Status, product.ShopeeStatus, product.FbStatus);
+        var rowIndex = _grid.Rows.Add(stt, product.VideoPath, product.Title, product.ShopeeAffLink, product.Status, product.ShopeeStatus, product.FbStatus);
         var row = _grid.Rows[rowIndex];
         row.Tag = originalIndex;
         row.Cells["ShopeeStatus"].Style.ForeColor = GetStatusColor(product.ShopeeStatus, "Đã up Shopee");
         row.Cells["FbStatus"].Style.ForeColor = GetStatusColor(product.FbStatus, "Đã up Facebook");
         row.Cells["Title"].ToolTipText = product.IsAiTitleGenerated ? "✨ Tiêu đề đã được tạo bằng AI" : string.Empty;
         StyleStatusCell(row.Cells["Status"], product.Status);
+    }
+
+    private void UpdateRunButtonText()
+    {
+        if (_btnRun == null) return;
+        var count = SelectedIndices.Count;
+        if (count > 1)
+        {
+            _btnRun.Text = $"▶ Chạy {count} video đã chọn";
+        }
+        else
+        {
+            _btnRun.Text = "▶ Chạy workflow";
+        }
     }
 
     private void GridMouseDown(object? sender, MouseEventArgs e)
@@ -551,6 +593,17 @@ public sealed class ProductListControl : UserControl
         };
 
         var count = selectedIndices.Count;
+        var itemOpenVideo = new ToolStripMenuItem(count > 1 ? "🎬 Mở / Xem video đầu tiên (Double click)" : "🎬 Mở / Xem video (Double click)", null, (_, _) =>
+        {
+            var path = selectedJobs.FirstOrDefault()?.VideoPath;
+            MediaHelper.PlayOrOpenMedia(path, FindForm());
+        })
+        {
+            Font = new Font("Segoe UI Semibold", 9.5F),
+            ForeColor = Color.FromArgb(79, 70, 229)
+        };
+        menu.Items.Add(itemOpenVideo);
+
         var runText = count > 1
             ? $"▶ Chạy quy trình {count} video đã chọn"
             : "▶ Chạy quy trình video đã chọn";
@@ -565,10 +618,18 @@ public sealed class ProductListControl : UserControl
 
         menu.Items.Add(new ToolStripSeparator());
 
-        var editText = count > 1 ? $"✏️ Sửa hàng loạt ({count} video)..." : "✏️ Sửa video này...";
+        var editText = count > 1 ? $"✏️ Sửa chi tiết ({count} video)..." : "✏️ Sửa video này...";
         var itemEdit = new ToolStripMenuItem(editText);
         itemEdit.Click += (_, _) => EditRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(itemEdit);
+
+        var itemEditTitles = new ToolStripMenuItem(count > 1 ? $"📝 Sửa danh sách tiêu đề ({count} video)..." : "📝 Sửa tiêu đề...")
+        {
+            Font = new Font("Segoe UI Semibold", 9.5F),
+            ForeColor = Color.FromArgb(10, 151, 205)
+        };
+        itemEditTitles.Click += (_, _) => EditTitlesRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(itemEditTitles);
 
         var deleteText = count > 1 ? $"🗑️ Xóa {count} video đã chọn" : "🗑️ Xóa video này";
         var itemDelete = new ToolStripMenuItem(deleteText)
@@ -693,22 +754,8 @@ public sealed class ProductListControl : UserControl
         if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
 
         var columnName = _grid.Columns[e.ColumnIndex].Name;
-
-        if (columnName == "VideoPath")
+        if (columnName is "STT" or "VideoPath" or "Status")
         {
-            using var dialog = new OpenFileDialog
-            {
-                Title = "Chọn file video",
-                Filter = "Video|*.mp4;*.mov;*.mkv;*.avi;*.webm;*.m4v|Tất cả file|*.*",
-                CheckFileExists = true,
-                Multiselect = false
-            };
-            if (dialog.ShowDialog(FindForm()) == DialogResult.OK)
-            {
-                _grid.Rows[e.RowIndex].Cells["VideoPath"].Value = dialog.FileName;
-                RaiseProductChanged(e.RowIndex);
-            }
-
             return;
         }
 
@@ -727,6 +774,12 @@ public sealed class ProductListControl : UserControl
     private void GridCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
     {
         if (e.RowIndex < 0) return;
+        if (e.ColumnIndex >= 0 && _grid.Columns[e.ColumnIndex].Name == "VideoPath")
+        {
+            var path = Convert.ToString(_grid.Rows[e.RowIndex].Cells["VideoPath"].Value);
+            MediaHelper.PlayOrOpenMedia(path, FindForm());
+            return;
+        }
         EditRequested?.Invoke(this, EventArgs.Empty);
     }
 
