@@ -18,6 +18,14 @@ public sealed class ProductListControl : UserControl
     private bool _isFiltering = false;
     private bool _showDuplicatesOnly = false;
 
+    private FlowLayoutPanel _statsPanel = null!;
+    private Label _lblStatRunning = null!;
+    private Label _lblStatSuccess = null!;
+    private Label _lblStatPending = null!;
+    private Label _lblStatFailed = null!;
+    private int _currentRunningJobNumber = 0;
+    private int _totalRunningJobs = 0;
+
     public event EventHandler? ImportRequested;
     public event EventHandler? AddRequested;
     public event EventHandler? EditRequested;
@@ -170,6 +178,25 @@ public sealed class ProductListControl : UserControl
         searchPanel.Controls.Add(_btnClearSearch);
         searchPanel.Controls.Add(_lblSearchCount);
 
+        _statsPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right,
+            AutoSize = true,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Padding = new Padding(0, 16, 12, 0),
+            BackColor = Color.Transparent
+        };
+
+        _lblStatRunning = CreateStatBadge("⚡ Đang chạy: #0", Color.FromArgb(109, 40, 217), Color.FromArgb(243, 232, 255));
+        _lblStatRunning.Visible = false;
+        _lblStatSuccess = CreateStatBadge("✔ Thành công: 0", Color.FromArgb(21, 128, 61), Color.FromArgb(220, 252, 231));
+        _lblStatPending = CreateStatBadge("⏳ Chờ: 0", Color.FromArgb(180, 83, 9), Color.FromArgb(254, 243, 199));
+        _lblStatFailed = CreateStatBadge("✖ Lỗi: 0", Color.FromArgb(185, 28, 28), Color.FromArgb(254, 226, 226));
+
+        _statsPanel.Controls.AddRange([_lblStatRunning, _lblStatSuccess, _lblStatPending, _lblStatFailed]);
+
+        header.Controls.Add(_statsPanel);
         header.Controls.Add(searchPanel);
         header.Controls.Add(subtitle);
         header.Controls.Add(title);
@@ -348,6 +375,7 @@ public sealed class ProductListControl : UserControl
         _allFolders = folders ?? [];
         UpdateFolderList();
         ApplyFilter();
+        UpdateStats();
     }
 
     private void UpdateFolderList()
@@ -439,6 +467,7 @@ public sealed class ProductListControl : UserControl
         finally
         {
             _isFiltering = false;
+            UpdateStats();
         }
     }
 
@@ -488,6 +517,7 @@ public sealed class ProductListControl : UserControl
 
         _grid.InvalidateRow(row.Index);
         _grid.Update();
+        UpdateStats();
     }
 
     public int SelectedIndex
@@ -856,6 +886,72 @@ public sealed class ProductListControl : UserControl
         }
     }
 
+    private static Label CreateStatBadge(string text, Color textColor, Color bgColor)
+    {
+        return new Label
+        {
+            Text = text,
+            AutoSize = true,
+            Font = new Font("Segoe UI Semibold", 8.5F),
+            ForeColor = textColor,
+            BackColor = bgColor,
+            Padding = new Padding(8, 6, 8, 6),
+            Margin = new Padding(0, 4, 8, 0),
+            Cursor = Cursors.Default
+        };
+    }
+
+    public void UpdateStats()
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(UpdateStats);
+            return;
+        }
+
+        if (_lblStatSuccess == null || _lblStatPending == null || _lblStatFailed == null) return;
+
+        var list = GetFilteredJobs();
+        int success = list.Count(j => j.Status == JobStatus.Succeeded || j.Status == "Thành công");
+        int pending = list.Count(j => j.Status == JobStatus.Waiting || j.Status == "Chờ" || string.IsNullOrWhiteSpace(j.Status));
+        int failed = list.Count(j => j.Status == JobStatus.Failed || j.Status == "Lỗi");
+        int running = list.Count(j => j.Status == JobStatus.Running || j.Status == "Đang chạy");
+
+        _lblStatSuccess.Text = $"✔ Thành công: {success}";
+        _lblStatPending.Text = $"⏳ Chờ: {pending}";
+        _lblStatFailed.Text = $"✖ Lỗi: {failed}";
+
+        if (_currentRunningJobNumber > 0)
+        {
+            _lblStatRunning.Visible = true;
+            _lblStatRunning.Text = _totalRunningJobs > 0
+                ? $"⚡ Đang chạy: #{_currentRunningJobNumber} / {_totalRunningJobs}"
+                : $"⚡ Đang chạy: #{_currentRunningJobNumber}";
+        }
+        else if (running > 0)
+        {
+            _lblStatRunning.Visible = true;
+            _lblStatRunning.Text = $"⚡ Đang chạy: {running}";
+        }
+        else
+        {
+            _lblStatRunning.Visible = false;
+        }
+    }
+
+    public void UpdateRunningProgress(int currentNumber, int totalJobs, string? title = null)
+    {
+        _currentRunningJobNumber = currentNumber;
+        _totalRunningJobs = totalJobs;
+        UpdateStats();
+    }
+
+    public void ClearRunningProgress()
+    {
+        _currentRunningJobNumber = 0;
+        _totalRunningJobs = 0;
+        UpdateStats();
+    }
 }
 
 public sealed class ProductChangedEventArgs(int index, JobItem product) : EventArgs

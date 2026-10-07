@@ -10,7 +10,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
-SetupIconFile=compiler:SetupClassicIcon.ico
+SetupIconFile=app_icon.ico
 
 [Tasks]
 Name: "desktopicon"; Description: "Tạo biểu tượng trên màn hình Desktop"; GroupDescription: "Additional icons:"; Flags: checkablealone

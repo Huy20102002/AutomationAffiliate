@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWindowsForms>true</UseWindowsForms>
-    <ApplicationIcon />
+    <ApplicationIcon>app_icon.ico</ApplicationIcon>
     <RootNamespace>ShopeeVideoUploader</RootNamespace>
     <AssemblyName>ShopeeVideoUploader</AssemblyName>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
@@ -26,6 +26,9 @@
 
   <ItemGroup>
     <None Update="scrcpy\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="app_icon.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

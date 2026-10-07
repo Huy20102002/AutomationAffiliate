@@ -47,6 +47,7 @@ partial class MainForm
     private Control btnDevPhoneScreenshot;
     private Control btnDevicesStartScrcpy;
     private Control btnDevicesStopScrcpy;
+    private Control btnToggleScrcpyFloat;
     private Control btnOpenShopee;
     private Control btnOpenTikTok;
     private Control btnOpenFacebook;
@@ -84,6 +85,7 @@ partial class MainForm
     private Control btnStart;
     private Control btnTestWorkflow;
     private Control btnStop;
+    private Guna.UI2.WinForms.Guna2ComboBox cboTopWorkflowSelect;
     private Guna.UI2.WinForms.Guna2ComboBox cboMainFolderSelect;
     private Guna.UI2.WinForms.Guna2ComboBox cboWorkflowProfiles;
     private Control btnAddWorkflowProfile;
@@ -303,11 +305,25 @@ partial class MainForm
         topBar.Controls.Add(centerPanel);
         
         // --- RIGHT: folder select + action buttons ---
-        var rightPanel = new Panel { Dock = DockStyle.Right, Width = 524, BackColor = Color.Transparent };
+        var rightPanel = new Panel { Dock = DockStyle.Right, Width = 710, BackColor = Color.Transparent };
         
-        cboMainFolderSelect = new Guna.UI2.WinForms.Guna2ComboBox
+        cboTopWorkflowSelect = new Guna.UI2.WinForms.Guna2ComboBox
         {
             Location = new Point(0, 16),
+            Size = new Size(170, 38),
+            FillColor = Color.White,
+            BorderRadius = 8,
+            BorderThickness = 1,
+            BorderColor = Color.FromArgb(226, 232, 240),
+            ForeColor = Color.FromArgb(15, 23, 42),
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Font = new Font("Segoe UI", 9F)
+        };
+        rightPanel.Controls.Add(cboTopWorkflowSelect);
+
+        cboMainFolderSelect = new Guna.UI2.WinForms.Guna2ComboBox
+        {
+            Location = new Point(178, 16),
             Size = new Size(160, 38),
             FillColor = Color.White,
             BorderRadius = 8,
@@ -322,7 +338,7 @@ partial class MainForm
         rightPanel.Controls.Add(cboMainFolderSelect);
         
         btnStart = CreateButton("▶  CHẠY QUY TRÌNH", Color.FromArgb(79, 70, 229), 160);
-        btnStart.Location = new Point(168, 16);
+        btnStart.Location = new Point(346, 16);
         if (btnStart is Guna.UI2.WinForms.Guna2Button stBtn)
         {
             stBtn.Size = new Size(160, 38);
@@ -332,7 +348,7 @@ partial class MainForm
         rightPanel.Controls.Add(btnStart);
         
         btnTestWorkflow = CreateButton("▷  CHẠY THỬ", Color.FromArgb(248, 250, 252), 105);
-        btnTestWorkflow.Location = new Point(336, 16);
+        btnTestWorkflow.Location = new Point(514, 16);
         if (btnTestWorkflow is Guna.UI2.WinForms.Guna2Button twBtn)
         {
             twBtn.Size = new Size(105, 38);
@@ -345,7 +361,7 @@ partial class MainForm
         rightPanel.Controls.Add(btnTestWorkflow);
         
         btnStop = CreateButton("■  DỪNG", Color.FromArgb(254, 242, 242), 74);
-        btnStop.Location = new Point(448, 16);
+        btnStop.Location = new Point(627, 16);
         btnStop.Enabled = false;
         if (btnStop is Guna.UI2.WinForms.Guna2Button spBtn)
         {
@@ -1455,7 +1471,9 @@ partial class MainForm
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false
         };
-        flpBottomActions.Controls.AddRange([btnDevicesStartScrcpy, btnDevicesStopScrcpy]);
+        btnToggleScrcpyFloat = CreateButton("↗ Tách cửa sổ", Color.FromArgb(243, 244, 246), 115);
+        btnToggleScrcpyFloat.ForeColor = Color.FromArgb(55, 65, 81);
+        flpBottomActions.Controls.AddRange([btnDevicesStartScrcpy, btnDevicesStopScrcpy, btnToggleScrcpyFloat]);
         phoneBottomBar.Controls.Add(flpBottomActions);
 
         phoneCard.Controls.Add(pnlDevicesScrcpyHost);
@@ -1563,6 +1581,8 @@ partial class MainForm
 
         bodyLayout.Controls.Add(rightPanel, 1, 0);
         panelDevicesView.Controls.Add(bodyLayout);
+        heading.SendToBack();
+        bodyLayout.BringToFront();
 
         viewHost.Controls.Add(panelDevicesView);
     }

@@ -82,6 +82,9 @@ public static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
 
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    public static extern bool SetWindowText(IntPtr hWnd, string lpString);
+
     // ====================================================================
     // WINDOW STYLE MANIPULATION
     // ====================================================================
@@ -211,6 +214,9 @@ public static class NativeMethods
 
     /// <summary>Vẽ lại frame sau khi thay đổi</summary>
     public const uint SWP_FRAMECHANGED = 0x0020;
+
+    /// <summary>Hiển thị cửa sổ</summary>
+    public const uint SWP_SHOWWINDOW = 0x0040;
 
     // --- Messages ---
 

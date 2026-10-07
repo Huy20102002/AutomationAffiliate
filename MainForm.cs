@@ -70,6 +70,13 @@ public partial class MainForm : Form
         try { _dbService.InitializeDatabase(); _ = Task.Run(() => _dbService.CreateDailyBackup()); } catch (Exception ex) { Logger.Error("Lỗi khởi tạo DB", ex); }
         _actionRecorder = new AdbActionRecorder(_adb);
         InitializeComponent();
+        try
+        {
+            var iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_icon.ico");
+            if (File.Exists(iconPath))
+                Icon = new Icon(iconPath);
+        }
+        catch { }
         InitializeAffiliateLinkModule();
         InitializeTikTokDownloader();
         InitializeTelegramBot();
@@ -235,6 +242,14 @@ public partial class MainForm : Form
         cboTapMode.SelectedIndexChanged += (_, _) => UpdateTapModeFields();
         cboVideoSource.SelectedIndexChanged += (_, _) => UpdateVideoSourceHint();
         cboWorkflowProfiles.SelectedIndexChanged += (_, _) => SwitchWorkflowProfile();
+        cboTopWorkflowSelect.SelectedIndexChanged += (_, _) =>
+        {
+            var sel = cboTopWorkflowSelect.SelectedItem as string;
+            if (!string.IsNullOrEmpty(sel) && sel != _currentWorkflowFile)
+            {
+                SwitchWorkflowProfile(sel);
+            }
+        };
         btnAddWorkflowProfile.Click += (_, _) => CreateNewWorkflowProfile();
         btnManualSaveProfile.Click += (_, _) => { SaveAutoSavedWorkflow(); SetStatus($"Đã lưu vào {_currentWorkflowFile}"); };
         btnExportProfile.Click += (_, _) => SaveWorkflow();
@@ -280,6 +295,7 @@ public partial class MainForm : Form
         btnDevPhoneScreenshot.Click += async (_, _) => await TakeDeviceScreenshotAsync();
         btnDevicesStartScrcpy.Click += async (_, _) => await EnsureScrcpyRunningAsync(pnlDevicesScrcpyHost);
         btnDevicesStopScrcpy.Click += (_, _) => StopScrcpy();
+        btnToggleScrcpyFloat.Click += async (_, _) => await ToggleScrcpyFloatingModeAsync();
 
         btnOpenShopee.Click += async (_, _) => await LaunchAppAsync("com.shopee.vn");
         btnOpenTikTok.Click += async (_, _) => await LaunchAppAsync("com.ss.android.ugc.trill");
@@ -2017,6 +2033,7 @@ public partial class MainForm : Form
     private void RefreshWorkflowProfilesList(string selectFile = "")
     {
         cboWorkflowProfiles.Items.Clear();
+        if (cboTopWorkflowSelect != null) cboTopWorkflowSelect.Items.Clear();
         if (Directory.Exists(_workflowsDirectory))
         {
             var files = Directory.GetFiles(_workflowsDirectory, "*.json")
@@ -2024,20 +2041,27 @@ public partial class MainForm : Form
                 .Where(f => !string.IsNullOrEmpty(f) && !f.StartsWith("_ios_"))
                 .ToArray();
             cboWorkflowProfiles.Items.AddRange(files);
+            if (cboTopWorkflowSelect != null) cboTopWorkflowSelect.Items.AddRange(files);
             
+            string targetToSelect = "";
             if (!string.IsNullOrEmpty(selectFile) && cboWorkflowProfiles.Items.Contains(selectFile))
-                cboWorkflowProfiles.SelectedItem = selectFile;
+                targetToSelect = selectFile;
             else if (!string.IsNullOrEmpty(_currentWorkflowFile) && files.Contains(_currentWorkflowFile))
-                cboWorkflowProfiles.SelectedItem = _currentWorkflowFile;
+                targetToSelect = _currentWorkflowFile;
             else if (files.Length > 0)
-                cboWorkflowProfiles.SelectedIndex = 0;
+                targetToSelect = files[0];
             else
             {
                 _currentWorkflowFile = "Shopee_Upload.json";
                 WorkflowEngine.SaveWorkflow(_androidSteps, _variables, _jobs, CurrentWorkflowPath);
                 cboWorkflowProfiles.Items.Add(_currentWorkflowFile);
-                cboWorkflowProfiles.SelectedIndex = 0;
+                if (cboTopWorkflowSelect != null) cboTopWorkflowSelect.Items.Add(_currentWorkflowFile);
+                targetToSelect = _currentWorkflowFile;
             }
+
+            cboWorkflowProfiles.SelectedItem = targetToSelect;
+            if (cboTopWorkflowSelect != null && cboTopWorkflowSelect.Items.Contains(targetToSelect))
+                cboTopWorkflowSelect.SelectedItem = targetToSelect;
         }
     }
 
@@ -2052,6 +2076,10 @@ public partial class MainForm : Form
         if (cboWorkflowProfiles.SelectedItem as string != selectedFile && cboWorkflowProfiles.Items.Contains(selectedFile))
         {
             cboWorkflowProfiles.SelectedItem = selectedFile;
+        }
+        if (cboTopWorkflowSelect != null && cboTopWorkflowSelect.SelectedItem as string != selectedFile && cboTopWorkflowSelect.Items.Contains(selectedFile))
+        {
+            cboTopWorkflowSelect.SelectedItem = selectedFile;
         }
         
         if (File.Exists(CurrentWorkflowPath))
@@ -3150,6 +3178,7 @@ public partial class MainForm : Form
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         var updated = dialog.Result;
+        updated.Id = original.Id;
         updated.Data = original.Data;
         if (!string.Equals(original.VideoPath, updated.VideoPath, StringComparison.OrdinalIgnoreCase))
         {
@@ -3886,7 +3915,7 @@ public partial class MainForm : Form
 
         pnlWorkflowScrcpyHost.SetBounds(x, y, finalW, finalH);
 
-        if (_scrcpyEmbedder.IsRunning && _scrcpyEmbedder.HostPanel == pnlWorkflowScrcpyHost && _scrcpyEmbedder.Hwnd != IntPtr.Zero)
+        if (_scrcpyEmbedder.IsRunning && !_scrcpyEmbedder.IsFloating && _scrcpyEmbedder.HostPanel == pnlWorkflowScrcpyHost && _scrcpyEmbedder.Hwnd != IntPtr.Zero)
         {
             NativeMethods.MoveWindow(_scrcpyEmbedder.Hwnd, 0, 0, finalW, finalH, true);
             NativeMethods.SetWindowPos(_scrcpyEmbedder.Hwnd, IntPtr.Zero, 0, 0, finalW, finalH,
@@ -3926,7 +3955,7 @@ public partial class MainForm : Form
 
         pnlDevicesScrcpyHost.SetBounds(x, y, finalW, finalH);
 
-        if (_scrcpyEmbedder.IsRunning && _scrcpyEmbedder.HostPanel == pnlDevicesScrcpyHost && _scrcpyEmbedder.Hwnd != IntPtr.Zero)
+        if (_scrcpyEmbedder.IsRunning && !_scrcpyEmbedder.IsFloating && _scrcpyEmbedder.HostPanel == pnlDevicesScrcpyHost && _scrcpyEmbedder.Hwnd != IntPtr.Zero)
         {
             NativeMethods.MoveWindow(_scrcpyEmbedder.Hwnd, 0, 0, finalW, finalH, true);
             NativeMethods.SetWindowPos(_scrcpyEmbedder.Hwnd, IntPtr.Zero, 0, 0, finalW, finalH,
@@ -4011,12 +4040,12 @@ public partial class MainForm : Form
 
         if (_scrcpyEmbedder.IsRunning)
         {
-            if (_scrcpyEmbedder.HostPanel != targetPanel)
+            if (!_scrcpyEmbedder.IsFloating && _scrcpyEmbedder.HostPanel != targetPanel)
             {
                 _scrcpyEmbedder.Reparent(targetPanel);
                 _scrcpyMouseCapture.EmbeddedScrcpyHwnd = _scrcpyEmbedder.Hwnd;
             }
-            lblDevicesPhoneStatus.Text = "Đang truyền phát";
+            lblDevicesPhoneStatus.Text = _scrcpyEmbedder.IsFloating ? "● Đang mở cửa sổ riêng" : "Đang truyền phát";
             return;
         }
 
@@ -4046,6 +4075,64 @@ public partial class MainForm : Form
         _scrcpyEmbedder.Stop();
         _scrcpyMouseCapture.EmbeddedScrcpyHwnd = IntPtr.Zero;
         lblDevicesPhoneStatus.Text = "Đã dừng truyền phát";
+        if (btnToggleScrcpyFloat != null)
+        {
+            btnToggleScrcpyFloat.Text = "↗ Tách cửa sổ";
+            if (btnToggleScrcpyFloat is Guna.UI2.WinForms.Guna2Button btn)
+            {
+                btn.FillColor = Color.FromArgb(243, 244, 246);
+                btn.ForeColor = Color.FromArgb(55, 65, 81);
+            }
+        }
+    }
+
+    private async Task ToggleScrcpyFloatingModeAsync()
+    {
+        if (!_scrcpyEmbedder.IsRunning)
+        {
+            if (_currentDevice == null)
+            {
+                ShowError("Chưa kết nối thiết bị. Vui lòng kết nối trước khi mở màn hình.");
+                return;
+            }
+            await EnsureScrcpyRunningAsync(pnlDevicesScrcpyHost);
+            if (!_scrcpyEmbedder.IsRunning) return;
+        }
+
+        if (_scrcpyEmbedder.IsFloating)
+        {
+            // Đang mở cửa sổ ngoài -> Thu vào phần mềm
+            _scrcpyEmbedder.AttachToPanel(pnlDevicesScrcpyHost);
+            LayoutDevicesPhone();
+            btnToggleScrcpyFloat.Text = "↗ Tách cửa sổ";
+            if (btnToggleScrcpyFloat is Guna.UI2.WinForms.Guna2Button btn)
+            {
+                btn.FillColor = Color.FromArgb(243, 244, 246);
+                btn.ForeColor = Color.FromArgb(55, 65, 81);
+            }
+            lblDevicesPhoneStatus.Text = "● Đang truyền phát";
+            SetStatus("Đã thu màn hình điện thoại vào giao diện");
+        }
+        else
+        {
+            // Đang nhúng -> Tách ra cửa sổ rời bên cạnh form chính
+            var screenBounds = Screen.FromControl(this).WorkingArea;
+            var floatX = Math.Min(screenBounds.Right - 420, Right + 10);
+            if (floatX < screenBounds.Left) floatX = Left + 20;
+            var floatY = Math.Max(screenBounds.Top, Top);
+            var floatW = 390;
+            var floatH = Math.Min(780, screenBounds.Height - 40);
+
+            _scrcpyEmbedder.DetachToFloatingWindow(new Rectangle(floatX, floatY, floatW, floatH));
+            btnToggleScrcpyFloat.Text = "↙ Thu vào";
+            if (btnToggleScrcpyFloat is Guna.UI2.WinForms.Guna2Button btn)
+            {
+                btn.FillColor = Color.FromArgb(238, 242, 255);
+                btn.ForeColor = Color.FromArgb(79, 70, 229);
+            }
+            lblDevicesPhoneStatus.Text = "● Đang mở cửa sổ riêng";
+            SetStatus("Đã tách màn hình điện thoại thành cửa sổ riêng");
+        }
     }
 
     private void UpdateDevicesViewLabels()
@@ -4466,6 +4553,7 @@ public partial class MainForm : Form
                 {
                     var currentJob = jobsToRun[index];
                     UpdateJobRow(currentJob, status, log, targetPlatform);
+                    productListControl.UpdateRunningProgress(index + 1, jobsToRun.Count, currentJob.Title);
 
                     if (status is JobStatus.Succeeded or JobStatus.Failed)
                     {
@@ -4544,6 +4632,7 @@ public partial class MainForm : Form
                 btnTestWorkflow.Enabled = true;
                 btnStop.Enabled = false;
                 productListControl.SetRunningState(false);
+                productListControl.ClearRunningProgress();
             }
 
             if (InvokeRequired) BeginInvoke(UpdateUiEnd);

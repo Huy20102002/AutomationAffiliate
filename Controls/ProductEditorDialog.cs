@@ -10,6 +10,7 @@ public sealed class ProductEditorDialog : Form
     private Guna.UI2.WinForms.Guna2TextBox? _videoPath;
     private Guna.UI2.WinForms.Guna2TextBox? _title;
     private Guna.UI2.WinForms.Guna2TextBox? _affiliateLink;
+    private Guna.UI2.WinForms.Guna2ComboBox? _generalStatus;
     private Guna.UI2.WinForms.Guna2ComboBox? _status;
     private Guna.UI2.WinForms.Guna2ComboBox? _fbStatus;
 
@@ -112,7 +113,7 @@ public sealed class ProductEditorDialog : Form
     // ═══════════════════════════════════════════════════════
     private void BuildEditMode(JobItem product, int defaultFolderId = 0)
     {
-        ClientSize = new Size(660, 450);
+        ClientSize = new Size(660, 495);
         FormBorderStyle = FormBorderStyle.FixedDialog;
 
         var mainPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(24, 16, 24, 0) };
@@ -124,7 +125,7 @@ public sealed class ProductEditorDialog : Form
         // Video path
         var lblVideo = CreateLabel("Video", 0, currentY + 6);
         _videoPath = CreateTextBox(product.VideoPath);
-        _videoPath.ReadOnly = true;
+        _videoPath.ReadOnly = false;
         _videoPath.SetBounds(inputX, currentY, inputWidth - 48, 34);
         _videoPath.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         var btnBrowse = CreateSmallButton("...", 44);
@@ -164,8 +165,24 @@ public sealed class ProductEditorDialog : Form
 
         currentY += 46;
 
-        // Status
-        var lblStatus = CreateLabel("Trạng thái", 0, currentY + 6);
+        // General Status (Chờ, Thành công, Lỗi, Đang chạy)
+        var lblGeneralStatus = CreateLabel("Trạng thái", 0, currentY + 6);
+        _generalStatus = new Guna.UI2.WinForms.Guna2ComboBox
+        {
+            FillColor = Color.White, BorderRadius = 7, BorderThickness = 1,
+            BorderColor = Color.FromArgb(190, 198, 211),
+            FocusedState = { BorderColor = Color.FromArgb(96, 82, 218) },
+            DropDownStyle = ComboBoxStyle.DropDownList
+        };
+        _generalStatus.SetBounds(inputX, currentY, inputWidth, 34);
+        _generalStatus.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        _generalStatus.Items.AddRange(["Chờ", "Thành công", "Lỗi", "Đang chạy"]);
+        _generalStatus.SelectedItem = !string.IsNullOrWhiteSpace(product.Status) ? product.Status : "Chờ";
+
+        currentY += 46;
+
+        // Shopee Status
+        var lblStatus = CreateLabel("Trạng thái Shopee", 0, currentY + 6);
         _status = new Guna.UI2.WinForms.Guna2ComboBox
         {
             FillColor = Color.White, BorderRadius = 7, BorderThickness = 1,
@@ -226,6 +243,7 @@ public sealed class ProductEditorDialog : Form
             lblTitle, _title,
             hashPanel,
             lblLink, _affiliateLink, btnMultiLink,
+            lblGeneralStatus, _generalStatus,
             lblStatus, _status,
             lblFolder, _folderPicker,
             lblFbStatus, _fbStatus
@@ -1159,7 +1177,14 @@ public sealed class ProductEditorDialog : Form
             if (paths.Length == 0)
             { ShowWarn("Vui lòng nhập đường dẫn video hoặc ảnh."); return; }
             if (!paths.All(File.Exists))
-            { ShowWarn("Một hoặc nhiều file video/ảnh không tồn tại."); return; }
+            {
+                var confirm = MessageBox.Show(this,
+                    "⚠️ Một hoặc nhiều file video/ảnh hiện không tìm thấy trên máy tính.\nBạn có chắc chắn muốn lưu thông tin này không?",
+                    "Xác nhận lưu thông tin",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+                if (confirm != DialogResult.Yes) return;
+            }
 
 
             int? folderId = _original?.FolderId;
@@ -1172,7 +1197,7 @@ public sealed class ProductEditorDialog : Form
                 VideoPath = videoPath,
                 Title = (_title?.Text ?? "").Trim(),
                 ShopeeAffLink = (_affiliateLink?.Text ?? "").Trim(),
-                Status = _original?.Status ?? "Chờ",
+                Status = _generalStatus?.SelectedItem?.ToString() ?? _original?.Status ?? "Chờ",
                 ShopeeStatus = _status?.SelectedItem?.ToString() ?? "Chưa up Shopee",
                 FbStatus = _fbStatus?.SelectedItem?.ToString() ?? "Chưa up Facebook",
                 Log = _original?.Log ?? string.Empty

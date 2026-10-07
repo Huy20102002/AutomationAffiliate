@@ -145,6 +145,7 @@ public class ScrcpyEmbedder : IDisposable
             _resizeTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             _resizeTimer.Tick += (s, e) =>
             {
+                if (IsFloating) return;
                 if (_scrcpyHwnd != IntPtr.Zero && _hostPanel != null && _hostPanel.Width > 0 && _hostPanel.Height > 0)
                 {
                     if (NativeMethods.GetClientRect(_scrcpyHwnd, out var rc))
@@ -173,6 +174,7 @@ public class ScrcpyEmbedder : IDisposable
 
     private void HostPanel_SizeChanged(object? sender, EventArgs e)
     {
+        if (IsFloating) return;
         if (_scrcpyHwnd != IntPtr.Zero && _hostPanel != null && _hostPanel.Width > 0 && _hostPanel.Height > 0)
         {
             NativeMethods.MoveWindow(_scrcpyHwnd, 0, 0, _hostPanel.Width, _hostPanel.Height, true);
@@ -185,8 +187,105 @@ public class ScrcpyEmbedder : IDisposable
     /// <summary>
     /// Chuyển đổi cửa sổ scrcpy đang chạy sang một Panel mới mà không cần khởi động lại tiến trình.
     /// </summary>
+    public bool IsFloating { get; private set; } = false;
+
+    /// <summary>
+    /// Tách cửa sổ scrcpy thành một cửa sổ rời (floating window) độc lập trên màn hình.
+    /// </summary>
+    public bool DetachToFloatingWindow(Rectangle? preferredBounds = null)
+    {
+        if (_scrcpyHwnd == IntPtr.Zero || _scrcpyProcess == null || _scrcpyProcess.HasExited)
+            return false;
+
+        try
+        {
+            if (_hostPanel != null)
+                _hostPanel.SizeChanged -= HostPanel_SizeChanged;
+
+            // Đưa cửa sổ scrcpy ra Desktop (không còn là child của Panel)
+            NativeMethods.SetParent(_scrcpyHwnd, IntPtr.Zero);
+
+            // Khôi phục style cửa sổ độc lập (WS_POPUP, WS_CAPTION, WS_THICKFRAME, SYSMENU, MIN/MAX)
+            int style = NativeMethods.GetWindowLong(_scrcpyHwnd, NativeMethods.GWL_STYLE);
+            style &= ~NativeMethods.WS_CHILD;
+            style |= NativeMethods.WS_POPUP | NativeMethods.WS_CAPTION |
+                     NativeMethods.WS_THICKFRAME | NativeMethods.WS_MINIMIZEBOX |
+                     NativeMethods.WS_MAXIMIZEBOX | NativeMethods.WS_SYSMENU |
+                     NativeMethods.WS_VISIBLE;
+            NativeMethods.SetWindowLong(_scrcpyHwnd, NativeMethods.GWL_STYLE, style);
+
+            // Đặt tên tiêu đề cửa sổ cho người dùng dễ nhận biết (VD: SM_J810Y hoặc Serial)
+            var title = !string.IsNullOrEmpty(_deviceSerial) ? $"Điện thoại {_deviceSerial}" : "Màn hình Scrcpy";
+            NativeMethods.SetWindowText(_scrcpyHwnd, title);
+
+            // Định vị cửa sổ
+            int x = preferredBounds?.X ?? 120;
+            int y = preferredBounds?.Y ?? 120;
+            int w = preferredBounds?.Width ?? 380;
+            int h = preferredBounds?.Height ?? 750;
+
+            NativeMethods.SetWindowPos(_scrcpyHwnd, IntPtr.Zero, x, y, w, h,
+                NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_FRAMECHANGED);
+
+            NativeMethods.ShowWindow(_scrcpyHwnd, NativeMethods.SW_SHOW);
+            IsFloating = true;
+            Logger.Info("Đã tách cửa sổ Scrcpy thành cửa sổ riêng biệt.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Lỗi tách cửa sổ Scrcpy", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Thu cửa sổ scrcpy trở lại nhúng vào Panel bên trong ứng dụng.
+    /// </summary>
+    public bool AttachToPanel(Panel newHostPanel)
+    {
+        if (_scrcpyHwnd == IntPtr.Zero || _scrcpyProcess == null || _scrcpyProcess.HasExited)
+            return false;
+
+        try
+        {
+            _hostPanel = newHostPanel;
+            _hostPanel.SizeChanged -= HostPanel_SizeChanged;
+            _hostPanel.SizeChanged += HostPanel_SizeChanged;
+
+            NativeMethods.SetParent(_scrcpyHwnd, _hostPanel.Handle);
+
+            int style = NativeMethods.GetWindowLong(_scrcpyHwnd, NativeMethods.GWL_STYLE);
+            style &= ~(NativeMethods.WS_POPUP | NativeMethods.WS_CAPTION |
+                        NativeMethods.WS_MAXIMIZEBOX | NativeMethods.WS_MINIMIZEBOX | NativeMethods.WS_SYSMENU);
+            style |= NativeMethods.WS_CHILD | NativeMethods.WS_VISIBLE |
+                     NativeMethods.WS_CLIPCHILDREN | NativeMethods.WS_CLIPSIBLINGS |
+                     NativeMethods.WS_THICKFRAME;
+            NativeMethods.SetWindowLong(_scrcpyHwnd, NativeMethods.GWL_STYLE, style);
+
+            if (_hostPanel.Width > 0 && _hostPanel.Height > 0)
+            {
+                NativeMethods.MoveWindow(_scrcpyHwnd, 0, 0, _hostPanel.Width, _hostPanel.Height, true);
+                NativeMethods.SetWindowPos(_scrcpyHwnd, IntPtr.Zero, 0, 0,
+                    _hostPanel.Width, _hostPanel.Height,
+                    NativeMethods.SWP_NOZORDER | NativeMethods.SWP_FRAMECHANGED);
+            }
+
+            NativeMethods.ShowWindow(_scrcpyHwnd, NativeMethods.SW_SHOW);
+            IsFloating = false;
+            Logger.Info("Đã thu cửa sổ Scrcpy trở lại giao diện phần mềm.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Lỗi gắn lại cửa sổ Scrcpy", ex);
+            return false;
+        }
+    }
+
     public bool Reparent(Panel newHostPanel)
     {
+        IsFloating = false;
         if (_scrcpyHwnd == IntPtr.Zero || _scrcpyProcess == null || _scrcpyProcess.HasExited)
             return false;
 
