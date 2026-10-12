@@ -678,6 +678,7 @@ public partial class MainForm : Form
         dgvJobs.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(75, 85, 99);
         dgvJobs.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI Semibold", 9F);
         dgvJobs.ColumnHeadersDefaultCellStyle.Padding = new Padding(8, 6, 8, 6);
+        dgvJobs.ColumnHeadersVisible = true;
         dgvJobs.ColumnHeadersHeight = 38;
 
         dgvJobs.DefaultCellStyle.BackColor = Color.White;

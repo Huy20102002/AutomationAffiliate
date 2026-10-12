@@ -801,7 +801,7 @@ public sealed class ProductListControl : UserControl
             Name = name,
             HeaderText = headerText,
             FillWeight = fillWeight,
-            ReadOnly = name == "VideoPath" || name == "Status",
+            ReadOnly = name == "VideoPath" || name == "Status" || name == "FinishedAt",
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
     }

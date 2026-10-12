@@ -1106,7 +1106,9 @@ partial class MainForm
             GridColor = Color.FromArgb(240, 242, 245),
             RowHeadersVisible = false,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-            EnableHeadersVisualStyles = false
+            EnableHeadersVisualStyles = false,
+            ColumnHeadersVisible = true,
+            ColumnHeadersHeight = 38
         };
         dgvJobs.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
         {
@@ -1145,7 +1147,8 @@ partial class MainForm
         AddColumn("Nhật ký", "colLog", 280);
 
         jobsTab.Controls.Add(dgvJobs);
-        jobToolbar.BringToFront();
+        jobToolbar.SendToBack();
+        dgvJobs.BringToFront();
         tabs.TabPages.Add(jobsTab);
 
         txtLog = new RichTextBox
@@ -1189,7 +1192,13 @@ partial class MainForm
 
     private void AddColumn(string header, string name, int width)
     {
-        dgvJobs.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = header, Name = name, Width = width, AutoSizeMode = width == 260 ? DataGridViewAutoSizeColumnMode.Fill : DataGridViewAutoSizeColumnMode.None });
+        dgvJobs.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = header,
+            Name = name,
+            Width = width,
+            AutoSizeMode = name == "colLog" ? DataGridViewAutoSizeColumnMode.Fill : DataGridViewAutoSizeColumnMode.None
+        });
     }
 
     private static Guna.UI2.WinForms.Guna2Panel CreateCardPanel() => new() { Dock = DockStyle.Fill, FillColor = Color.White, BorderRadius = 8, Margin = new Padding(5), Padding = new Padding(1) };
