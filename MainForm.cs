@@ -2442,13 +2442,15 @@ public partial class MainForm : Form
         {
             if (selectedFolderId != -1 && selectedFolderId != -2 && (job.FolderId ?? 0) != selectedFolderId) continue;
             if (chkOnlyWithLink != null && chkOnlyWithLink.Checked && string.IsNullOrWhiteSpace(job.ShopeeAffLink)) continue;
-            var row = dgvJobs.Rows.Add(job.Id, job.VideoPath, job.Title, job.ShopeeAffLink, job.Status, job.ShopeeStatus, job.FbStatus, job.Log);
+            int displayStt = productListControl.GetJobDisplayStt(job);
+            var row = dgvJobs.Rows.Add(displayStt > 0 ? displayStt : (dgvJobs.Rows.Count + 1), job.VideoPath, job.Title, job.ShopeeAffLink, job.Status, job.ShopeeStatus, job.FbStatus, job.FinishedAt, job.Log);
             dgvJobs.Rows[row].Tag = job.Id;
             StyleStatusCell(dgvJobs.Rows[row].Cells["colStatus"], job.Status);
             StyleShopeeStatusCell(dgvJobs.Rows[row].Cells["colShopeeStatus"], job.ShopeeStatus);
             StyleFbStatusCell(dgvJobs.Rows[row].Cells["colFbStatus"], job.FbStatus);
         }
         UpdateLinkFilterCount();
+        UpdateWorkflowStats();
     }
 
     private void UpdateLinkFilterCount()
@@ -2506,6 +2508,7 @@ public partial class MainForm : Form
         }
         
         FilterJobsGrid();
+        UpdateWorkflowStats();
         RefreshOverviewDashboard();
     }
 
@@ -2531,9 +2534,15 @@ public partial class MainForm : Form
         if (status == JobStatus.Succeeded)
             JobStatus.MarkCompleted(current, targetPlatform);
 
+        if (status == JobStatus.Succeeded || status == JobStatus.Failed)
+        {
+            current.FinishedAt = DateTime.Now.ToString("dd/MM/yyyy HH:mm");
+        }
+
         productListControl.UpdateProduct(index, current);
         UpdateLegacyJobGrid(current);
-        _dbService.UpdateJobStatus(current.Id, current.Status, current.Log, current.ShopeeStatus, current.FbStatus);
+        _dbService.UpdateJob(current);
+        UpdateWorkflowStats();
     }
 
     private void UpdateLegacyJobGrid(JobItem job)
@@ -2541,19 +2550,74 @@ public partial class MainForm : Form
         foreach (DataGridViewRow row in dgvJobs.Rows)
         {
             if (!Equals(row.Tag, job.Id)) continue;
-            row.Cells["colId"].Value = job.Id;
             row.Cells["colVideo"].Value = job.VideoPath;
             row.Cells["colTitle"].Value = job.Title;
             row.Cells["colLink"].Value = job.ShopeeAffLink;
             row.Cells["colStatus"].Value = job.Status;
             row.Cells["colShopeeStatus"].Value = job.ShopeeStatus;
             row.Cells["colFbStatus"].Value = job.FbStatus;
+            row.Cells["colFinishedAt"].Value = job.FinishedAt;
             row.Cells["colLog"].Value = job.Log;
             StyleStatusCell(row.Cells["colStatus"], job.Status);
             StyleShopeeStatusCell(row.Cells["colShopeeStatus"], job.ShopeeStatus);
             StyleFbStatusCell(row.Cells["colFbStatus"], job.FbStatus);
             break;
         }
+    }
+
+    private int _currentRunningJobDisplayStt;
+    private int _totalRunningJobsCount;
+
+    public void UpdateWorkflowStats()
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(UpdateWorkflowStats);
+            return;
+        }
+
+        if (_lblWfStatSuccess == null || _lblWfStatPending == null || _lblWfStatFailed == null) return;
+
+        var filteredJobs = productListControl.GetFilteredJobs();
+        int success = filteredJobs.Count(j => j.Status == JobStatus.Succeeded || j.Status == "Thành công");
+        int pending = filteredJobs.Count(j => j.Status == JobStatus.Waiting || j.Status == "Chờ" || string.IsNullOrWhiteSpace(j.Status));
+        int failed = filteredJobs.Count(j => j.Status == JobStatus.Failed || j.Status == "Lỗi");
+        int running = filteredJobs.Count(j => j.Status == JobStatus.Running || j.Status == "Đang chạy");
+
+        _lblWfStatSuccess.Text = $"✔ Thành công: {success}";
+        _lblWfStatPending.Text = $"⏳ Chờ: {pending}";
+        _lblWfStatFailed.Text = $"✖ Lỗi: {failed}";
+
+        if (_currentRunningJobDisplayStt > 0)
+        {
+            _lblWfStatRunning.Visible = true;
+            _lblWfStatRunning.Text = _totalRunningJobsCount > 0
+                ? $"⚡ Đang chạy: #{_currentRunningJobDisplayStt} / {_totalRunningJobsCount}"
+                : $"⚡ Đang chạy: #{_currentRunningJobDisplayStt}";
+        }
+        else if (running > 0)
+        {
+            _lblWfStatRunning.Visible = true;
+            _lblWfStatRunning.Text = $"⚡ Đang chạy: {running}";
+        }
+        else
+        {
+            _lblWfStatRunning.Visible = false;
+        }
+    }
+
+    public void UpdateWorkflowRunningProgress(int displayStt, int totalJobs, string? title = null)
+    {
+        _currentRunningJobDisplayStt = displayStt;
+        _totalRunningJobsCount = totalJobs;
+        UpdateWorkflowStats();
+    }
+
+    public void ClearWorkflowRunningProgress()
+    {
+        _currentRunningJobDisplayStt = 0;
+        _totalRunningJobsCount = 0;
+        UpdateWorkflowStats();
     }
 
     private static void StyleFbStatusCell(DataGridViewCell cell, string status)
@@ -2575,10 +2639,14 @@ public partial class MainForm : Form
     private void ResetProductStatuses()
     {
         foreach (var job in _jobs)
+        {
             JobStatus.Reset(job);
+            _dbService.UpdateJob(job);
+        }
         RefreshJobGrid();
         _dbService.ResetAllJobStatuses();
         SaveAutoSavedWorkflow();
+        UpdateWorkflowStats();
         SetStatus("Đã đặt lại trạng thái sản phẩm");
     }
 
@@ -2596,6 +2664,7 @@ public partial class MainForm : Form
                 JobStatus.Reset(job);
                 productListControl.UpdateProduct(index, job);
                 UpdateLegacyJobGrid(job);
+                _dbService.UpdateJob(job);
                 if (job.Id > 0) selectedIds.Add(job.Id);
             }
         }
@@ -2604,6 +2673,7 @@ public partial class MainForm : Form
             _dbService.ResetJobStatuses(selectedIds);
         }
         SaveAutoSavedWorkflow();
+        UpdateWorkflowStats();
         SetStatus($"Đã đặt lại trạng thái {selectedIndices.Count} sản phẩm");
     }
 
@@ -4372,6 +4442,9 @@ public partial class MainForm : Form
         int delayMin = 0;
         int delayMax = 0;
         bool shuffleVideos = true;
+        bool limitJobCount = false;
+        int maxJobsToRun = 50;
+        bool autoCloseAppOnFinish = false;
         int folderId = (cboMainFolderSelect?.SelectedItem as ShopeeVideoUploader.Models.FolderItem)?.Id ?? -1;
         
         using (var dialog = new Controls.PlatformSelectDialog())
@@ -4382,6 +4455,9 @@ public partial class MainForm : Form
             delayMin = dialog.DelayMinMinutes;
             delayMax = dialog.DelayMaxMinutes;
             shuffleVideos = dialog.ShuffleVideos;
+            limitJobCount = dialog.LimitJobCount;
+            maxJobsToRun = dialog.MaxJobsToRun;
+            autoCloseAppOnFinish = dialog.AutoCloseAppOnFinish;
         }
 
         List<Models.JobItem> jobsToRun = [];
@@ -4403,6 +4479,21 @@ public partial class MainForm : Form
         if (chkOnlyWithLink != null && chkOnlyWithLink.Checked)
         {
             jobsToRun = jobsToRun.Where(j => !string.IsNullOrWhiteSpace(j.ShopeeAffLink)).ToList();
+        }
+
+        if (limitJobCount && maxJobsToRun > 0 && jobsToRun.Count > maxJobsToRun)
+        {
+            var pending = jobsToRun.Where(j => !JobStatus.IsCompleted(j, targetPlatform)).ToList();
+            if (pending.Count >= maxJobsToRun)
+            {
+                jobsToRun = pending.Take(maxJobsToRun).ToList();
+            }
+            else
+            {
+                var remaining = jobsToRun.Except(pending).Take(maxJobsToRun - pending.Count);
+                jobsToRun = pending.Concat(remaining).ToList();
+            }
+            Logger.Info($"[Workflow] Đã giới hạn chạy {jobsToRun.Count} video theo cấu hình ({maxJobsToRun} video).");
         }
 
         if (shuffleVideos && jobsToRun.Count > 1)
@@ -4464,7 +4555,7 @@ public partial class MainForm : Form
         var campaignName = (cboMainFolderSelect?.SelectedItem as ShopeeVideoUploader.Models.FolderItem)?.Name ?? "Tất cả chiến dịch";
         if (onlySelected) campaignName = "Video đã chọn";
 
-        await ExecuteWorkflowRunAsync(jobsToRun, targetPlatform, useAiTitle, delayMin, delayMax, campaignName);
+        await ExecuteWorkflowRunAsync(jobsToRun, targetPlatform, useAiTitle, delayMin, delayMax, campaignName, autoCloseAppOnFinish);
     }
 
     private async Task ExecuteWorkflowRunAsync(
@@ -4473,7 +4564,8 @@ public partial class MainForm : Form
         bool useAiTitle,
         int delayMin,
         int delayMax,
-        string campaignName)
+        string campaignName,
+        bool autoCloseAppOnFinish = false)
     {
         Func<JobItem, Task>? generateTitleFunc = null;
         if (useAiTitle)
@@ -4552,8 +4644,10 @@ public partial class MainForm : Form
                 if (index >= 0 && index < jobsToRun.Count)
                 {
                     var currentJob = jobsToRun[index];
+                    int displayStt = productListControl.GetJobDisplayStt(currentJob);
                     UpdateJobRow(currentJob, status, log, targetPlatform);
-                    productListControl.UpdateRunningProgress(index + 1, jobsToRun.Count, currentJob.Title);
+                    productListControl.UpdateRunningProgress(displayStt, jobsToRun.Count, currentJob.Title);
+                    UpdateWorkflowRunningProgress(displayStt, jobsToRun.Count, currentJob.Title);
 
                     if (status is JobStatus.Succeeded or JobStatus.Failed)
                     {
@@ -4565,7 +4659,7 @@ public partial class MainForm : Form
                         var avgDelay = (delayMin + delayMax) / 2;
                         _ = _telegramBotService?.SendVideoFinishedNotificationAsync(
                             currentJob,
-                            index + 1,
+                            displayStt,
                             jobsToRun.Count,
                             true,
                             targetPlatform,
@@ -4591,7 +4685,7 @@ public partial class MainForm : Form
                             {
                                 await _telegramBotService.SendVideoFinishedNotificationAsync(
                                     currentJob,
-                                    index + 1,
+                                    displayStt,
                                     jobsToRun.Count,
                                     false,
                                     targetPlatform,
@@ -4615,11 +4709,13 @@ public partial class MainForm : Form
                 _currentDevice = await _engine.RunAllJobsAsync(_workflowSteps, jobsToRun, _currentDevice!, token, onUpdate, targetPlatform, _variables, stepIndex => SetRunningStepFromWorker(stepIndex), preJobAction: generateTitleFunc, delayBetweenJobsMinMinutes: delayMin, delayBetweenJobsMaxMinutes: delayMax);
             }
             
-            SetStatus("Hoàn tất tất cả jobs");
+            var finishTimeStr = DateTime.Now.ToString("dd/MM/yyyy HH:mm");
+            SetStatus($"Hoàn tất tất cả jobs lúc {finishTimeStr}");
             var duration = DateTime.Now - startTime;
             var succeeded = jobsToRun.Count(j => JobStatus.IsCompleted(j, targetPlatform));
             var failed = jobsToRun.Count(j => j.Status == JobStatus.Failed);
             _ = _telegramBotService?.SendBatchFinishedNotificationAsync(jobsToRun.Count, succeeded, failed, duration, targetPlatform);
+            Logger.Info($"[Workflow] Hoàn tất tất cả jobs lúc {finishTimeStr}. Thành công: {succeeded}, Thất bại: {failed}.");
         }
         catch (OperationCanceledException) { SetStatus("Đã dừng bởi người dùng"); }
         catch (Exception ex) { ShowError($"Lỗi chạy workflow: {ex.Message}"); }
@@ -4633,6 +4729,7 @@ public partial class MainForm : Form
                 btnStop.Enabled = false;
                 productListControl.SetRunningState(false);
                 productListControl.ClearRunningProgress();
+                ClearWorkflowRunningProgress();
             }
 
             if (InvokeRequired) BeginInvoke(UpdateUiEnd);
@@ -4640,6 +4737,98 @@ public partial class MainForm : Form
 
             _cts?.Dispose();
             _cts = null;
+        }
+
+        if (autoCloseAppOnFinish && (token.IsCancellationRequested == false))
+        {
+            await PromptAutoCloseCountdownAsync();
+        }
+    }
+
+    private async Task PromptAutoCloseCountdownAsync()
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+
+        await Task.Yield();
+
+        using var cdForm = new Form
+        {
+            Text = "Tự động tắt ứng dụng",
+            ClientSize = new Size(420, 210),
+            StartPosition = FormStartPosition.CenterScreen,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            TopMost = true,
+            BackColor = Color.White,
+            Font = new Font("Segoe UI", 9.5F)
+        };
+
+        var lblHeader = new Label
+        {
+            Text = "✓ Đã chạy xong tất cả công việc!",
+            Font = new Font("Segoe UI Semibold", 12F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(16, 185, 129),
+            Location = new Point(24, 20),
+            AutoSize = true
+        };
+
+        int remainingSeconds = 15;
+        var lblMsg = new Label
+        {
+            Text = $"Ứng dụng sẽ tự động đóng sau {remainingSeconds} giây...\nNhấn 'Hủy bỏ' nếu bạn muốn tiếp tục sử dụng.",
+            Location = new Point(26, 56),
+            Size = new Size(368, 50),
+            Font = new Font("Segoe UI", 9.5F),
+            ForeColor = Color.FromArgb(75, 85, 99)
+        };
+
+        var btnCancel = new Guna.UI2.WinForms.Guna2Button
+        {
+            Text = "Hủy bỏ (Tiếp tục dùng)",
+            Location = new Point(115, 130),
+            Size = new Size(190, 42),
+            BorderRadius = 8,
+            FillColor = Color.FromArgb(239, 68, 68),
+            ForeColor = Color.White,
+            Font = new Font("Segoe UI Semibold", 10F),
+            Cursor = Cursors.Hand
+        };
+        btnCancel.Click += (_, _) => cdForm.Close();
+
+        cdForm.Controls.AddRange([lblHeader, lblMsg, btnCancel]);
+
+        using var timer = new System.Windows.Forms.Timer { Interval = 1000 };
+        timer.Tick += (_, _) =>
+        {
+            remainingSeconds--;
+            if (remainingSeconds <= 0)
+            {
+                timer.Stop();
+                cdForm.DialogResult = DialogResult.OK;
+                cdForm.Close();
+            }
+            else
+            {
+                lblMsg.Text = $"Ứng dụng sẽ tự động đóng sau {remainingSeconds} giây...\nNhấn 'Hủy bỏ' nếu bạn muốn tiếp tục sử dụng.";
+            }
+        };
+
+        timer.Start();
+        var result = cdForm.ShowDialog(this);
+        timer.Stop();
+
+        if (result == DialogResult.OK)
+        {
+            Logger.Info("[System] Đã tự động tắt ứng dụng theo cấu hình sau khi hoàn thành quy trình.");
+            SaveAutoSavedWorkflow();
+            try { StopScrcpy(); } catch { }
+            Application.Exit();
+        }
+        else
+        {
+            Logger.Info("[System] Người dùng đã hủy tự động tắt ứng dụng.");
+            SetStatus("Đã hủy tự động tắt ứng dụng.");
         }
     }
 

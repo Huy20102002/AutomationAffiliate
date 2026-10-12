@@ -11,11 +11,14 @@ public sealed class PlatformSelectDialog : Form
     public int DelayMinMinutes { get; private set; }
     public int DelayMaxMinutes { get; private set; }
     public bool ShuffleVideos { get; private set; } = true;
+    public bool LimitJobCount { get; private set; }
+    public int MaxJobsToRun { get; private set; } = 50;
+    public bool AutoCloseAppOnFinish { get; private set; }
 
     public PlatformSelectDialog()
     {
         Text = "Chọn nền tảng & Cấu hình chạy";
-        ClientSize = new Size(390, 295);
+        ClientSize = new Size(390, 375);
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -30,7 +33,7 @@ public sealed class PlatformSelectDialog : Form
             Font = new Font("Segoe UI Semibold", 11F),
             ForeColor = Color.FromArgb(31, 31, 44),
             AutoSize = true,
-            Location = new Point(20, 20)
+            Location = new Point(20, 18)
         };
 
         var lblDesc = new Label
@@ -38,14 +41,14 @@ public sealed class PlatformSelectDialog : Form
             Text = "Trạng thái thành công sẽ được cập nhật riêng cho nền tảng mà bạn chọn.",
             Font = new Font("Segoe UI", 8.5F),
             ForeColor = Color.FromArgb(114, 117, 134),
-            Location = new Point(22, 48),
+            Location = new Point(22, 44),
             Size = new Size(346, 30)
         };
         
         var chkUseAi = new Guna.UI2.WinForms.Guna2CheckBox
         {
             Text = "Tạo tiêu đề chuẩn SEO bằng AI trước khi đăng",
-            Location = new Point(22, 95),
+            Location = new Point(22, 85),
             AutoSize = true,
             Font = new Font("Segoe UI", 9F),
             Cursor = Cursors.Hand
@@ -54,7 +57,7 @@ public sealed class PlatformSelectDialog : Form
         var btnConfigAi = new Guna.UI2.WinForms.Guna2Button
         {
             Text = "⚙",
-            Location = new Point(340, 90),
+            Location = new Point(340, 80),
             Size = new Size(30, 30),
             FillColor = Color.FromArgb(235, 237, 242),
             ForeColor = Color.FromArgb(70, 70, 85),
@@ -76,14 +79,14 @@ public sealed class PlatformSelectDialog : Form
         var lblDelay = new Label
         {
             Text = "Nghỉ giữa các video (phút):",
-            Location = new Point(22, 135),
+            Location = new Point(22, 122),
             AutoSize = true,
             Font = new Font("Segoe UI", 9F)
         };
 
         var numMin = new Guna.UI2.WinForms.Guna2NumericUpDown
         {
-            Location = new Point(200, 130),
+            Location = new Point(200, 118),
             Size = new Size(65, 30),
             Minimum = 0,
             Maximum = 999,
@@ -96,14 +99,14 @@ public sealed class PlatformSelectDialog : Form
         var lblTo = new Label
         {
             Text = "-",
-            Location = new Point(272, 135),
+            Location = new Point(272, 122),
             AutoSize = true,
             Font = new Font("Segoe UI", 9F)
         };
 
         var numMax = new Guna.UI2.WinForms.Guna2NumericUpDown
         {
-            Location = new Point(295, 130),
+            Location = new Point(295, 118),
             Size = new Size(65, 30),
             Minimum = 0,
             Maximum = 999,
@@ -116,7 +119,7 @@ public sealed class PlatformSelectDialog : Form
         var chkShuffle = new Guna.UI2.WinForms.Guna2CheckBox
         {
             Text = "🔀 Xáo trộn thứ tự (tránh up liên tiếp cùng 1 sản phẩm)",
-            Location = new Point(22, 175),
+            Location = new Point(22, 158),
             AutoSize = true,
             Font = new Font("Segoe UI Semibold", 9F),
             ForeColor = Color.FromArgb(31, 31, 44),
@@ -124,10 +127,46 @@ public sealed class PlatformSelectDialog : Form
             Cursor = Cursors.Hand
         };
 
+        var chkLimitJobs = new Guna.UI2.WinForms.Guna2CheckBox
+        {
+            Text = "Giới hạn số video chạy:",
+            Location = new Point(22, 196),
+            AutoSize = true,
+            Font = new Font("Segoe UI Semibold", 9F),
+            ForeColor = Color.FromArgb(31, 31, 44),
+            Checked = false,
+            Cursor = Cursors.Hand
+        };
+
+        var numMaxJobs = new Guna.UI2.WinForms.Guna2NumericUpDown
+        {
+            Location = new Point(200, 192),
+            Size = new Size(160, 30),
+            Minimum = 1,
+            Maximum = 99999,
+            Value = 50,
+            Font = new Font("Segoe UI", 9F),
+            Cursor = Cursors.Hand,
+            Enabled = false,
+            UpDownButtonFillColor = Color.FromArgb(235, 237, 242)
+        };
+        chkLimitJobs.CheckedChanged += (_, _) => numMaxJobs.Enabled = chkLimitJobs.Checked;
+
+        var chkAutoClose = new Guna.UI2.WinForms.Guna2CheckBox
+        {
+            Text = "⚡ Tự động tắt ứng dụng sau khi chạy xong",
+            Location = new Point(22, 234),
+            AutoSize = true,
+            Font = new Font("Segoe UI Semibold", 9F),
+            ForeColor = Color.FromArgb(109, 40, 217),
+            Checked = false,
+            Cursor = Cursors.Hand
+        };
+
         var btnShopee = new Guna.UI2.WinForms.Guna2Button
         {
             Text = "Shopee",
-            Location = new Point(22, 225),
+            Location = new Point(22, 290),
             Size = new Size(160, 44),
             FillColor = Color.FromArgb(238, 77, 45),
             ForeColor = Color.White,
@@ -141,6 +180,9 @@ public sealed class PlatformSelectDialog : Form
             DelayMinMinutes = (int)numMin.Value;
             DelayMaxMinutes = (int)numMax.Value;
             ShuffleVideos = chkShuffle.Checked;
+            LimitJobCount = chkLimitJobs.Checked;
+            MaxJobsToRun = (int)numMaxJobs.Value;
+            AutoCloseAppOnFinish = chkAutoClose.Checked;
             SelectedPlatform = "Shopee";
             DialogResult = DialogResult.OK;
             Close();
@@ -149,7 +191,7 @@ public sealed class PlatformSelectDialog : Form
         var btnFb = new Guna.UI2.WinForms.Guna2Button
         {
             Text = "Facebook",
-            Location = new Point(200, 225),
+            Location = new Point(200, 290),
             Size = new Size(160, 44),
             FillColor = Color.FromArgb(24, 119, 242),
             ForeColor = Color.White,
@@ -163,11 +205,14 @@ public sealed class PlatformSelectDialog : Form
             DelayMinMinutes = (int)numMin.Value;
             DelayMaxMinutes = (int)numMax.Value;
             ShuffleVideos = chkShuffle.Checked;
+            LimitJobCount = chkLimitJobs.Checked;
+            MaxJobsToRun = (int)numMaxJobs.Value;
+            AutoCloseAppOnFinish = chkAutoClose.Checked;
             SelectedPlatform = "Facebook";
             DialogResult = DialogResult.OK;
             Close();
         };
 
-        Controls.AddRange([lblTitle, lblDesc, chkUseAi, btnConfigAi, lblDelay, numMin, lblTo, numMax, chkShuffle, btnShopee, btnFb]);
+        Controls.AddRange([lblTitle, lblDesc, chkUseAi, btnConfigAi, lblDelay, numMin, lblTo, numMax, chkShuffle, chkLimitJobs, numMaxJobs, chkAutoClose, btnShopee, btnFb]);
     }
 }

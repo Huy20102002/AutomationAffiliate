@@ -46,6 +46,13 @@ public class JobItem
         set => Data["AiTitleGenerated"] = value ? "1" : "0";
     }
 
+    /// <summary>Thời gian chạy xong (dd/MM/yyyy HH:mm)</summary>
+    public string FinishedAt
+    {
+        get => Data.TryGetValue("FinishedAt", out var v) ? v : string.Empty;
+        set => Data["FinishedAt"] = value ?? string.Empty;
+    }
+
     /// <summary>Dữ liệu JSON dùng để lưu vào CSDL</summary>
     public string DataJson
     {

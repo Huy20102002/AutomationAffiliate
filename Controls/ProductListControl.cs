@@ -347,6 +347,7 @@ public sealed class ProductListControl : UserControl
             Items = { "Chưa up Facebook", "Đã up Facebook" },
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
+        AddColumn("FinishedAt", "Thời gian xong", 14F);
 
         _grid.CellClick += GridCellClick;
         _grid.CellEndEdit += GridCellEndEdit;
@@ -513,11 +514,36 @@ public sealed class ProductListControl : UserControl
         row.Cells["FbStatus"].Value = product.FbStatus;
         row.Cells["FbStatus"].Style.ForeColor = GetStatusColor(product.FbStatus, "Đã up Facebook");
         row.Cells["Status"].Value = product.Status;
+        row.Cells["FinishedAt"].Value = product.FinishedAt;
         StyleStatusCell(row.Cells["Status"], product.Status);
 
         _grid.InvalidateRow(row.Index);
         _grid.Update();
         UpdateStats();
+    }
+
+    public int GetJobDisplayStt(JobItem? product)
+    {
+        if (product == null) return 0;
+        foreach (DataGridViewRow r in _grid.Rows)
+        {
+            if (r.Tag is int idx && idx >= 0 && idx < _allProducts.Count)
+            {
+                var item = _allProducts[idx];
+                if (item.Id == product.Id || ReferenceEquals(item, product))
+                {
+                    if (r.Cells["STT"].Value is int stt) return stt;
+                    if (int.TryParse(r.Cells["STT"].Value?.ToString(), out var parsedStt)) return parsedStt;
+                    return r.Index + 1;
+                }
+            }
+        }
+        for (int i = 0; i < _allProducts.Count; i++)
+        {
+            if (_allProducts[i].Id == product.Id || ReferenceEquals(_allProducts[i], product))
+                return i + 1;
+        }
+        return product.Id > 0 ? product.Id : 1;
     }
 
     public int SelectedIndex
@@ -561,12 +587,13 @@ public sealed class ProductListControl : UserControl
 
     private void AddProductRow(int stt, int originalIndex, JobItem product)
     {
-        var rowIndex = _grid.Rows.Add(stt, product.VideoPath, product.Title, product.ShopeeAffLink, product.Status, product.ShopeeStatus, product.FbStatus);
+        var rowIndex = _grid.Rows.Add(stt, product.VideoPath, product.Title, product.ShopeeAffLink, product.Status, product.ShopeeStatus, product.FbStatus, product.FinishedAt);
         var row = _grid.Rows[rowIndex];
         row.Tag = originalIndex;
         row.Cells["ShopeeStatus"].Style.ForeColor = GetStatusColor(product.ShopeeStatus, "Đã up Shopee");
         row.Cells["FbStatus"].Style.ForeColor = GetStatusColor(product.FbStatus, "Đã up Facebook");
         row.Cells["Title"].ToolTipText = product.IsAiTitleGenerated ? "✨ Tiêu đề đã được tạo bằng AI" : string.Empty;
+        row.Cells["FinishedAt"].ReadOnly = true;
         StyleStatusCell(row.Cells["Status"], product.Status);
     }
 
@@ -784,7 +811,7 @@ public sealed class ProductListControl : UserControl
         if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
 
         var columnName = _grid.Columns[e.ColumnIndex].Name;
-        if (columnName is "STT" or "VideoPath" or "Status")
+        if (columnName is "STT" or "VideoPath" or "Status" or "FinishedAt")
         {
             return;
         }

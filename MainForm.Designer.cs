@@ -88,6 +88,11 @@ partial class MainForm
     private Guna.UI2.WinForms.Guna2ComboBox cboTopWorkflowSelect;
     private Guna.UI2.WinForms.Guna2ComboBox cboMainFolderSelect;
     private Guna.UI2.WinForms.Guna2ComboBox cboWorkflowProfiles;
+    private FlowLayoutPanel _workflowStatsPanel;
+    private Label _lblWfStatRunning;
+    private Label _lblWfStatSuccess;
+    private Label _lblWfStatPending;
+    private Label _lblWfStatFailed;
     private Control btnAddWorkflowProfile;
     private Control btnDeleteWorkflowProfile;
     private Control btnRenameWorkflowProfile;
@@ -1071,7 +1076,23 @@ partial class MainForm
         btnImportExcel.Location = new Point(0, 3);
         btnExportTemplate.Location = new Point(128, 3);
         btnExportResult.Location = new Point(261, 3);
-        jobToolbar.Controls.AddRange([btnImportExcel, btnExportTemplate, btnExportResult]);
+        _workflowStatsPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right,
+            AutoSize = true,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Padding = new Padding(0, 3, 8, 0),
+            BackColor = Color.Transparent
+        };
+        _lblWfStatRunning = CreateStatBadge("⚡ Đang chạy: #0", Color.FromArgb(109, 40, 217), Color.FromArgb(243, 232, 255));
+        _lblWfStatRunning.Visible = false;
+        _lblWfStatSuccess = CreateStatBadge("✔ Thành công: 0", Color.FromArgb(21, 128, 61), Color.FromArgb(220, 252, 231));
+        _lblWfStatPending = CreateStatBadge("⏳ Chờ: 0", Color.FromArgb(180, 83, 9), Color.FromArgb(254, 243, 199));
+        _lblWfStatFailed = CreateStatBadge("✖ Lỗi: 0", Color.FromArgb(185, 28, 28), Color.FromArgb(254, 226, 226));
+        _workflowStatsPanel.Controls.AddRange([_lblWfStatRunning, _lblWfStatSuccess, _lblWfStatPending, _lblWfStatFailed]);
+
+        jobToolbar.Controls.AddRange([btnImportExcel, btnExportTemplate, btnExportResult, _workflowStatsPanel]);
         jobsTab.Controls.Add(jobToolbar);
 
         dgvJobs = new Guna.UI2.WinForms.Guna2DataGridView
@@ -1114,13 +1135,14 @@ partial class MainForm
         };
 
         AddColumn("STT", "colId", 50);
-        AddColumn("Đường dẫn video", "colVideo", 320);
-        AddColumn("Tiêu đề", "colTitle", 350);
-        AddColumn("Liên kết tiếp thị", "colLink", 260);
-        AddColumn("Trạng thái", "colStatus", 110);
-        AddColumn("Trạng thái Shopee", "colShopeeStatus", 140);
-        AddColumn("Trạng thái FB", "colFbStatus", 140);
-        AddColumn("Nhật ký", "colLog", 300);
+        AddColumn("Đường dẫn video", "colVideo", 300);
+        AddColumn("Tiêu đề", "colTitle", 330);
+        AddColumn("Liên kết tiếp thị", "colLink", 240);
+        AddColumn("Trạng thái", "colStatus", 100);
+        AddColumn("Trạng thái Shopee", "colShopeeStatus", 130);
+        AddColumn("Trạng thái FB", "colFbStatus", 130);
+        AddColumn("Thời gian xong", "colFinishedAt", 130);
+        AddColumn("Nhật ký", "colLog", 280);
 
         jobsTab.Controls.Add(dgvJobs);
         jobToolbar.BringToFront();
@@ -1171,6 +1193,21 @@ partial class MainForm
     }
 
     private static Guna.UI2.WinForms.Guna2Panel CreateCardPanel() => new() { Dock = DockStyle.Fill, FillColor = Color.White, BorderRadius = 8, Margin = new Padding(5), Padding = new Padding(1) };
+
+    private static Label CreateStatBadge(string text, Color textColor, Color bgColor)
+    {
+        return new Label
+        {
+            Text = text,
+            AutoSize = true,
+            Font = new Font("Segoe UI Semibold", 8.5F),
+            ForeColor = textColor,
+            BackColor = bgColor,
+            Padding = new Padding(8, 5, 8, 5),
+            Margin = new Padding(0, 0, 6, 0),
+            Cursor = Cursors.Default
+        };
+    }
 
     private static Panel CreateHeading(string title, string subtitle)
     {

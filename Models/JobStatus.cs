@@ -46,5 +46,6 @@ public static class JobStatus
         job.ShopeeStatus = ShopeePending;
         job.FbStatus = FacebookPending;
         job.Log = string.Empty;
+        job.FinishedAt = string.Empty;
     }
 }
