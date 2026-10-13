@@ -81,14 +81,25 @@ public class JobItem
     public List<string> GetShopeeAffLinks()
     {
         if (string.IsNullOrWhiteSpace(ShopeeAffLink)) return [];
-        var parts = ShopeeAffLink.Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
         var list = new List<string>();
+        var matches = System.Text.RegularExpressions.Regex.Matches(ShopeeAffLink, @"https?://[^\s,;\r\n""]+");
+        if (matches.Count > 0)
+        {
+            foreach (System.Text.RegularExpressions.Match m in matches)
+            {
+                var url = m.Value.Trim();
+                if (!string.IsNullOrWhiteSpace(url) && !list.Contains(url))
+                    list.Add(url);
+            }
+            return list;
+        }
+
+        var parts = ShopeeAffLink.Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
         foreach (var p in parts)
         {
-            var match = System.Text.RegularExpressions.Regex.Match(p, @"https?://[^\s,;]+");
-            var link = match.Success ? match.Value : p.Trim();
-            if (!string.IsNullOrWhiteSpace(link))
-                list.Add(link);
+            var clean = p.Trim();
+            if (!string.IsNullOrWhiteSpace(clean) && !list.Contains(clean))
+                list.Add(clean);
         }
         return list;
     }

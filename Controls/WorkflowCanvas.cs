@@ -318,8 +318,7 @@ public sealed class WorkflowCanvas : ScrollableControl
 
         // Kéo vùng trống bằng chuột trái, hoặc giữ Space/chuột giữa để di chuyển toàn canvas (như bình thường)
         if (e.Button == MouseButtons.Middle || 
-            (e.Button == MouseButtons.Left && (hit < 0 || (ModifierKeys & Keys.Space) == Keys.Space)) ||
-            (e.Button == MouseButtons.Right && hit < 0))
+            (e.Button == MouseButtons.Left && (hit < 0 || (ModifierKeys & Keys.Space) == Keys.Space)))
         {
             _isPanning = true;
             _panStartPoint = e.Location;

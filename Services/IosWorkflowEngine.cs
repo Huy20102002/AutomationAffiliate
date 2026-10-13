@@ -405,7 +405,7 @@ public sealed class IosWorkflowEngine
 
             case StepType.InputText:
                 var inputText = ResolveInputText(step, job, variables, currentLoopValue, loopIndex, loopTotal);
-                if (!step.TakeAllLinks && !string.IsNullOrWhiteSpace(inputText))
+                if (!step.TakeAllLinks && !string.IsNullOrWhiteSpace(inputText) && string.IsNullOrEmpty(currentLoopValue))
                 {
                     var lines = inputText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                     if (lines.Length > 1 && lines.All(l => l.Trim().StartsWith("http://", StringComparison.OrdinalIgnoreCase) || l.Trim().StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
@@ -699,7 +699,8 @@ public sealed class IosWorkflowEngine
         bool takeAllLinks = false,
         string? currentLoopValue = null,
         int loopIndex = 0,
-        int loopTotal = 0)
+        int loopTotal = 0,
+        string? loopVariable = null)
     {
         if (string.IsNullOrEmpty(template)) return template;
 
@@ -716,6 +717,7 @@ public sealed class IosWorkflowEngine
         var result = template.Replace("{Title}", job.Title)
                              .Replace("{ShopeeAffLink}", chosenLink)
                              .Replace("{CurrentAffLink}", chosenLink)
+                             .Replace("{CurrentLoopValue}", chosenLink)
                              .Replace("{LoopIndex}", loopIndex > 0 ? loopIndex.ToString() : "1")
                              .Replace("{LoopTotal}", loopTotal > 0 ? loopTotal.ToString() : "1")
                              .Replace("{ShopeeAffLinks}", allLinksNewline)
@@ -737,6 +739,12 @@ public sealed class IosWorkflowEngine
                              .Replace("{VideoPath}", job.VideoPath)
                              .Replace("{Id}", job.Id.ToString());
 
+        if (!string.IsNullOrEmpty(currentLoopValue) && !string.IsNullOrWhiteSpace(loopVariable))
+        {
+            var cleanVar = loopVariable.Trim('{', '}').Trim();
+            result = result.Replace("{" + cleanVar + "}", currentLoopValue);
+        }
+
         if (variables == null) return result;
         foreach (var variable in variables)
         {
@@ -744,6 +752,23 @@ public sealed class IosWorkflowEngine
             result = result.Replace(variable.Token, variable.Value);
         }
         return result;
+    }
+
+    private static bool IsLoopVariableMatch(string? name, string? loopVariable)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+        var clean = name.Trim('{', '}').Trim();
+        if (string.Equals(clean, "ShopeeAffLink", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(clean, "CurrentAffLink", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(clean, "CurrentLoopValue", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!string.IsNullOrWhiteSpace(loopVariable))
+        {
+            var cleanLoopVar = loopVariable.Trim('{', '}').Trim();
+            if (string.Equals(clean, cleanLoopVar, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     private static string ResolveInputText(
@@ -756,19 +781,44 @@ public sealed class IosWorkflowEngine
     {
         var input = step.TextValue.Trim();
         var takeAll = step.TakeAllLinks;
+
         if (string.IsNullOrWhiteSpace(step.BindingColumn))
         {
-            if (job.HasColumn(input)) return job.GetColumnValue(input, takeAll);
-            var resolved = ResolveText(step.TextValue, job, variables, takeAll, currentLoopValue, loopIndex, loopTotal);
+            if (!string.IsNullOrEmpty(currentLoopValue) && IsLoopVariableMatch(input, step.LoopVariable))
+            {
+                return currentLoopValue;
+            }
+
+            if (job.HasColumn(input))
+            {
+                var cleanCol = input.Trim('{', '}').Trim();
+                if (!string.IsNullOrEmpty(currentLoopValue) && IsLoopVariableMatch(cleanCol, step.LoopVariable))
+                    return currentLoopValue;
+                return job.GetColumnValue(input, takeAll);
+            }
+
+            var resolved = ResolveText(step.TextValue, job, variables, takeAll, currentLoopValue, loopIndex, loopTotal, step.LoopVariable);
             return Regex.Replace(resolved, @"\{([^{}]+)\}", match =>
             {
                 var columnName = match.Groups[1].Value.Trim();
+                if (!string.IsNullOrEmpty(currentLoopValue) && IsLoopVariableMatch(columnName, step.LoopVariable))
+                    return currentLoopValue;
                 return job.HasColumn(columnName) ? job.GetColumnValue(columnName, takeAll) : match.Value;
             });
         }
-        var columnValue = job.GetColumnValue(step.BindingColumn, takeAll);
+
+        string columnValue;
+        if (!string.IsNullOrEmpty(currentLoopValue) && IsLoopVariableMatch(step.BindingColumn, step.LoopVariable))
+        {
+            columnValue = currentLoopValue;
+        }
+        else
+        {
+            columnValue = job.GetColumnValue(step.BindingColumn, takeAll);
+        }
+
         if (string.IsNullOrWhiteSpace(step.TextValue)) return columnValue;
-        return ResolveText(step.TextValue, job, variables, takeAll, currentLoopValue, loopIndex, loopTotal).Replace("{Value}", columnValue);
+        return ResolveText(step.TextValue, job, variables, takeAll, currentLoopValue, loopIndex, loopTotal, step.LoopVariable).Replace("{Value}", columnValue);
     }
 
     private async Task RestartAppOnFailureAsync(

@@ -1062,6 +1062,10 @@ public partial class MainForm : Form
             {
                 var loopItem = menu.Items.Add($"🔁 Tạo vòng lặp cho bước này...", null, (_, _) => ConfigureLoopForSelectedSteps(new List<int> { index }));
                 loopItem.ForeColor = Color.FromArgb(147, 51, 234);
+
+                var rangeLoopItem = menu.Items.Add($"🔁 Cấu hình vòng lặp theo khoảng bước...", null, (_, _) => OpenLoopConfigDialogForRange(index + 1, Math.Min(index + 5, _workflowSteps.Count)));
+                rangeLoopItem.ForeColor = Color.FromArgb(147, 51, 234);
+
                 menu.Items.Add(new ToolStripSeparator());
             }
         }
@@ -1139,7 +1143,7 @@ public partial class MainForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("📐 Đặt lại góc nhìn (100%)", null, (_, _) => workflowCanvas.ResetZoom());
 
-        menu.Show(workflowCanvas, location);
+        menu.Show(workflowCanvas, workflowCanvas.PointToClient(Cursor.Position));
     }
 
     private void OpenLoopConfigDialogForRange(int? defaultStart = null, int? defaultEnd = null)

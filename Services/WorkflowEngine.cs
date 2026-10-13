@@ -103,19 +103,20 @@ public sealed class WorkflowEngine
 
                 // Lấy danh sách link / phần tử để lặp
                 var loopItems = new List<string>();
-                if (string.Equals(step.LoopVariable, "ShopeeAffLink", StringComparison.OrdinalIgnoreCase) ||
-                    string.IsNullOrEmpty(step.LoopVariable))
+                var cleanLoopVar = (step.LoopVariable ?? string.Empty).Trim('{', '}').Trim();
+                if (string.Equals(cleanLoopVar, "ShopeeAffLink", StringComparison.OrdinalIgnoreCase) ||
+                    string.IsNullOrEmpty(cleanLoopVar))
                 {
                     loopItems = job.GetShopeeAffLinks();
                 }
                 else
                 {
-                    var customVar = variables?.FirstOrDefault(v => string.Equals(v.Name, step.LoopVariable, StringComparison.OrdinalIgnoreCase));
+                    var customVar = variables?.FirstOrDefault(v => string.Equals(v.Name.Trim('{', '}'), cleanLoopVar, StringComparison.OrdinalIgnoreCase));
                     if (customVar != null && !string.IsNullOrWhiteSpace(customVar.Value))
                     {
                         loopItems = customVar.Value.Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
                     }
-                    else if (job.TryGetColumnValue(step.LoopVariable, out var colVal) && !string.IsNullOrWhiteSpace(colVal))
+                    else if (job.TryGetColumnValue(cleanLoopVar, out var colVal) && !string.IsNullOrWhiteSpace(colVal))
                     {
                         loopItems = colVal.Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
                     }
@@ -916,7 +917,8 @@ public sealed class WorkflowEngine
         bool takeAllLinks = false,
         string? currentLoopValue = null,
         int loopIndex = 0,
-        int loopTotal = 0)
+        int loopTotal = 0,
+        string? loopVariable = null)
     {
         if (string.IsNullOrEmpty(template)) return template;
 
@@ -935,6 +937,7 @@ public sealed class WorkflowEngine
             .Replace("{Title}", job.Title)
             .Replace("{ShopeeAffLink}", chosenLink)
             .Replace("{CurrentAffLink}", chosenLink)
+            .Replace("{CurrentLoopValue}", chosenLink)
             .Replace("{LoopIndex}", loopIndex > 0 ? loopIndex.ToString() : "1")
             .Replace("{LoopTotal}", loopTotal > 0 ? loopTotal.ToString() : "1")
             .Replace("{ShopeeAffLinks}", allLinksNewline)
@@ -956,6 +959,12 @@ public sealed class WorkflowEngine
             .Replace("{VideoPath}", job.VideoPath)
             .Replace("{Id}", job.Id.ToString());
 
+        if (!string.IsNullOrEmpty(currentLoopValue) && !string.IsNullOrWhiteSpace(loopVariable))
+        {
+            var cleanVar = loopVariable.Trim('{', '}').Trim();
+            result = result.Replace("{" + cleanVar + "}", currentLoopValue);
+        }
+
         if (variables == null) return result;
         foreach (var variable in variables)
         {
@@ -963,6 +972,23 @@ public sealed class WorkflowEngine
             result = result.Replace(variable.Token, variable.Value);
         }
         return result;
+    }
+
+    private static bool IsLoopVariableMatch(string? name, string? loopVariable)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+        var clean = name.Trim('{', '}').Trim();
+        if (string.Equals(clean, "ShopeeAffLink", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(clean, "CurrentAffLink", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(clean, "CurrentLoopValue", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!string.IsNullOrWhiteSpace(loopVariable))
+        {
+            var cleanLoopVar = loopVariable.Trim('{', '}').Trim();
+            if (string.Equals(clean, cleanLoopVar, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     private static string ResolveInputText(
@@ -975,27 +1001,50 @@ public sealed class WorkflowEngine
     {
         var input = step.TextValue.Trim();
         var takeAll = step.TakeAllLinks;
+
         if (string.IsNullOrWhiteSpace(step.BindingColumn))
         {
+            // Nếu đang trong vòng lặp và TextValue chỉ định biến vòng lặp (ShopeeAffLink, {ShopeeAffLink}, CurrentAffLink, v.v.)
+            if (!string.IsNullOrEmpty(currentLoopValue) && IsLoopVariableMatch(input, step.LoopVariable))
+            {
+                return currentLoopValue;
+            }
+
             // Cho phép nhập thẳng tên cột: Description hoặc {Description}.
             if (job.HasColumn(input))
+            {
+                var cleanCol = input.Trim('{', '}').Trim();
+                if (!string.IsNullOrEmpty(currentLoopValue) && IsLoopVariableMatch(cleanCol, step.LoopVariable))
+                    return currentLoopValue;
                 return job.GetColumnValue(input, takeAll);
+            }
 
-            var resolved = ResolveText(step.TextValue, job, variables, takeAll, currentLoopValue, loopIndex, loopTotal);
+            var resolved = ResolveText(step.TextValue, job, variables, takeAll, currentLoopValue, loopIndex, loopTotal, step.LoopVariable);
             return Regex.Replace(resolved, @"\{([^{}]+)\}", match =>
             {
                 var columnName = match.Groups[1].Value.Trim();
+                if (!string.IsNullOrEmpty(currentLoopValue) && IsLoopVariableMatch(columnName, step.LoopVariable))
+                    return currentLoopValue;
                 return job.HasColumn(columnName)
                     ? job.GetColumnValue(columnName, takeAll)
                     : match.Value;
             });
         }
 
-        var columnValue = job.GetColumnValue(step.BindingColumn, takeAll);
+        string columnValue;
+        if (!string.IsNullOrEmpty(currentLoopValue) && IsLoopVariableMatch(step.BindingColumn, step.LoopVariable))
+        {
+            columnValue = currentLoopValue;
+        }
+        else
+        {
+            columnValue = job.GetColumnValue(step.BindingColumn, takeAll);
+        }
+
         if (string.IsNullOrWhiteSpace(step.TextValue))
             return columnValue;
 
-        return ResolveText(step.TextValue, job, variables, takeAll, currentLoopValue, loopIndex, loopTotal)
+        return ResolveText(step.TextValue, job, variables, takeAll, currentLoopValue, loopIndex, loopTotal, step.LoopVariable)
             .Replace("{Value}", columnValue);
     }
 }
