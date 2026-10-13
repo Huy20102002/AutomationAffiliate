@@ -1004,6 +1004,16 @@ public partial class MainForm : Form
             menu.Items.Add(new ToolStripSeparator());
         }
 
+        var runFromHereItem = new ToolStripMenuItem($"▶ Chạy từ bước này đến hết (Bước {index + 1} ➔ {_workflowSteps.Count})...", null, async (_, _) => await StartTestWorkflowFromStepAsync(index));
+        runFromHereItem.Font = new Font(menu.Font, FontStyle.Bold);
+        runFromHereItem.ForeColor = Color.FromArgb(79, 70, 229);
+        menu.Items.Add(runFromHereItem);
+
+        var runSingleStepItem = new ToolStripMenuItem($"⚡ Chỉ chạy riêng bước này (Bước {index + 1})...", null, async (_, _) => await StartTestWorkflowFromStepAsync(index, runOnlyThisStep: true));
+        menu.Items.Add(runSingleStepItem);
+
+        menu.Items.Add(new ToolStripSeparator());
+
         menu.Items.Add("Sửa bước", null, (_, _) => LoadStepConfig(index));
         menu.Items.Add("Nhân bản bước", null, (_, _) => DuplicateStep(index));
         menu.Items.Add("Đưa đến vị trí...", null, (_, _) => MoveStepToPosition(index));
@@ -4984,6 +4994,144 @@ public partial class MainForm : Form
         {
             SetStatus("Chạy thử thất bại");
             Logger.Error("Lỗi chạy thử workflow", ex);
+            ShowError($"Chạy thử thất bại: {ex.Message}");
+        }
+        finally
+        {
+            workflowCanvas.ClearRunningStep();
+            btnStart.Enabled = true;
+            btnTestWorkflow.Enabled = true;
+            btnStop.Enabled = false;
+            _cts?.Dispose();
+            _cts = null;
+        }
+    }
+
+    private async Task StartTestWorkflowFromStepAsync(int startIndex, bool runOnlyThisStep = false)
+    {
+        if (!_isIosMode && _currentDevice == null)
+        {
+            ShowError("Chưa kết nối thiết bị. Vui lòng kết nối thiết bị trước khi chạy thử.");
+            return;
+        }
+        if (_workflowSteps.Count == 0 || startIndex < 0 || startIndex >= _workflowSteps.Count)
+        {
+            ShowError("Bước không hợp lệ hoặc Quy trình đang trống.");
+            return;
+        }
+        if (_cts != null)
+        {
+            ShowError("Đang có tiến trình khác đang thực thi. Vui lòng dừng tiến trình trước khi chạy thử.");
+            return;
+        }
+
+        var stepsToRun = runOnlyThisStep
+            ? _workflowSteps.Skip(startIndex).Take(1).ToList()
+            : _workflowSteps.Skip(startIndex).ToList();
+
+        if (stepsToRun.Count == 0) return;
+
+        // Lấy danh sách video từ thư mục hiện tại hoặc toàn bộ danh sách
+        var candidateJobs = productListControl.GetFilteredJobs().ToList();
+        if (candidateJobs.Count == 0)
+        {
+            candidateJobs = _jobs.ToList();
+        }
+
+        // Lấy video đang được chọn ở Tab Dữ liệu công việc
+        JobItem? preselectedJob = null;
+        int selectedProductIndex = productListControl.SelectedIndex;
+        if (selectedProductIndex >= 0 && selectedProductIndex < _jobs.Count)
+        {
+            preselectedJob = _jobs[selectedProductIndex];
+        }
+
+        string defaultPlatform = "Shopee";
+
+        JobItem testJob;
+        string targetPlatform;
+        using (var dialog = new Controls.SelectTestJobDialog(
+            startIndex,
+            _workflowSteps[startIndex],
+            stepsToRun.Count,
+            runOnlyThisStep,
+            candidateJobs,
+            preselectedJob,
+            job => productListControl.GetJobDisplayStt(job),
+            defaultPlatform))
+        {
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+                return;
+
+            testJob = dialog.SelectedJob ?? candidateJobs.FirstOrDefault() ?? new JobItem { Id = 0, Title = "Chạy thử" };
+            targetPlatform = dialog.SelectedPlatform;
+        }
+
+        _cts = new CancellationTokenSource();
+        var token = _cts.Token;
+
+        btnStart.Enabled = false;
+        btnTestWorkflow.Enabled = false;
+        btnStop.Enabled = true;
+        progressBar.Maximum = Math.Max(1, stepsToRun.Count);
+        progressBar.Value = 0;
+
+        string modeLabel = runOnlyThisStep
+            ? $"riêng Bước #{startIndex + 1}"
+            : $"từ Bước #{startIndex + 1} đến #{_workflowSteps.Count}";
+
+        SetStatus($"Đang chạy thử {modeLabel}...");
+        Logger.Info($"Bắt đầu chạy thử {modeLabel} ({stepsToRun.Count} bước) với video mẫu #{testJob.Id} ({testJob.Title}) trên nền tảng {targetPlatform}.");
+        workflowCanvas.ClearRunningStep();
+
+        try
+        {
+            var progress = new Progress<string>(message =>
+            {
+                SetStatus($"Chạy thử: {message}");
+                progressBar.Value = Math.Min(progressBar.Maximum, progressBar.Value + 1);
+                Logger.Info($"[TEST] {message}");
+            });
+
+            if (_isIosMode)
+            {
+                _iosEngine = new IosWorkflowEngine(_iosManager);
+                var result = await _iosEngine.ExecuteWorkflowAsync(
+                    stepsToRun,
+                    testJob,
+                    _currentIosDeviceId,
+                    token,
+                    progress,
+                    _variables,
+                    stepOffset => SetRunningStepFromWorker(startIndex + stepOffset),
+                    targetPlatform);
+            }
+            else
+            {
+                _engine = new WorkflowEngine(_adb, SendTextThroughAdbAsync);
+                var result = await _engine.ExecuteWorkflowAsync(
+                    stepsToRun,
+                    testJob,
+                    _currentDevice!,
+                    token,
+                    progress,
+                    _variables,
+                    stepOffset => SetRunningStepFromWorker(startIndex + stepOffset),
+                    targetPlatform);
+            }
+
+            SetStatus($"Đã hoàn tất chạy thử {modeLabel}");
+            Logger.Info($"Đã hoàn tất chạy thử workflow {modeLabel}.");
+        }
+        catch (OperationCanceledException)
+        {
+            SetStatus("Đã dừng chạy thử");
+            Logger.Info("Người dùng đã dừng chạy thử workflow.");
+        }
+        catch (Exception ex)
+        {
+            SetStatus("Chạy thử thất bại");
+            Logger.Error($"Lỗi chạy thử workflow {modeLabel}", ex);
             ShowError($"Chạy thử thất bại: {ex.Message}");
         }
         finally
