@@ -3215,27 +3215,38 @@ public partial class MainForm : Form
             using var bulkDialog = new ProductEditorDialog(selectedProducts, _jobs, _dbService.GetAllFolders(), defaultFolderId, _dbService.GetAllAffiliateLinks());
             if (bulkDialog.ShowDialog(this) != DialogResult.OK) return;
 
-            for (var i = 0; i < selectedIndices.Count && i < bulkDialog.BulkResults.Count; i++)
+            var updatedMap = bulkDialog.BulkResults.Where(b => b.Id > 0).ToDictionary(b => b.Id);
+            for (var i = 0; i < selectedIndices.Count; i++)
             {
                 var indexToUpdate = selectedIndices[i];
                 if (indexToUpdate < 0 || indexToUpdate >= _jobs.Count) continue;
 
                 var originalItem = _jobs[indexToUpdate];
-                var updatedItem = bulkDialog.BulkResults[i];
-                updatedItem.Id = originalItem.Id;
-                updatedItem.Status = originalItem.Status;
-                updatedItem.ShopeeStatus = originalItem.ShopeeStatus;
-                updatedItem.FbStatus = originalItem.FbStatus;
-                if (updatedItem.FolderId == -1) updatedItem.FolderId = originalItem.FolderId;
-                updatedItem.Log = originalItem.Log;
-                updatedItem.Data = originalItem.Data;
-
-                if (!string.Equals(originalItem.VideoPath, updatedItem.VideoPath, StringComparison.OrdinalIgnoreCase))
+                JobItem? updatedItem = null;
+                if (updatedMap.TryGetValue(originalItem.Id, out var byId))
                 {
-                    JobStatus.Reset(updatedItem);
+                    updatedItem = byId;
+                }
+                else if (i < bulkDialog.BulkResults.Count)
+                {
+                    updatedItem = bulkDialog.BulkResults[i];
+                    updatedItem.Id = originalItem.Id;
                 }
 
-                _jobs[indexToUpdate] = updatedItem;
+                if (updatedItem != null)
+                {
+                    if (updatedItem.FolderId == -1) updatedItem.FolderId = originalItem.FolderId;
+                    if (string.IsNullOrEmpty(updatedItem.Log)) updatedItem.Log = originalItem.Log;
+                    if (updatedItem.Data == null || updatedItem.Data.Count == 0) updatedItem.Data = originalItem.Data;
+                    if (string.IsNullOrEmpty(updatedItem.FinishedAt)) updatedItem.FinishedAt = originalItem.FinishedAt;
+
+                    if (!string.Equals(originalItem.VideoPath, updatedItem.VideoPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        JobStatus.Reset(updatedItem);
+                    }
+
+                    _jobs[indexToUpdate] = updatedItem;
+                }
             }
 
             RefreshJobGrid();

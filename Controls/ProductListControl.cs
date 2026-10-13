@@ -48,6 +48,7 @@ public sealed class ProductListControl : UserControl
 
     private Guna.UI2.WinForms.Guna2Button _btnRun = null!;
     private Guna.UI2.WinForms.Guna2Button _btnStop = null!;
+    private Guna.UI2.WinForms.Guna2Button _btnEdit = null!;
     private Guna.UI2.WinForms.Guna2Button _btnGenerateAiTitle = null!;
 
     public void SetRunningState(bool isRunning)
@@ -213,7 +214,7 @@ public sealed class ProductListControl : UserControl
         };
         var btnImport = CreateButton("Nhập Excel", Color.FromArgb(96, 82, 218), 112);
         var btnAdd = CreateButton("Thêm", Color.FromArgb(10, 151, 205), 78);
-        var btnEdit = CreateButton("Sửa", Color.FromArgb(228, 240, 249), 72);
+        _btnEdit = CreateButton("Sửa", Color.FromArgb(228, 240, 249), 72);
         var btnDelete = CreateButton("Xóa", Color.FromArgb(241, 226, 229), 72);
         _btnRun = CreateButton("▶ Chạy workflow", Color.FromArgb(0, 161, 112), 136);
         _btnStop = CreateButton("■ Dừng", Color.FromArgb(220, 38, 38), 85);
@@ -228,7 +229,7 @@ public sealed class ProductListControl : UserControl
 
         btnImport.Click += (_, _) => ImportRequested?.Invoke(this, EventArgs.Empty);
         btnAdd.Click += (_, _) => AddRequested?.Invoke(this, EventArgs.Empty);
-        btnEdit.Click += (_, _) => EditRequested?.Invoke(this, EventArgs.Empty);
+        _btnEdit.Click += (_, _) => EditRequested?.Invoke(this, EventArgs.Empty);
         btnDelete.Click += (_, _) => DeleteRequested?.Invoke(this, EventArgs.Empty);
         _btnRun.Click += (_, _) =>
         {
@@ -272,7 +273,7 @@ public sealed class ProductListControl : UserControl
             ApplyFilter();
         };
 
-        toolbar.Controls.AddRange([btnImport, btnAdd, btnEdit, btnDelete, btnFilterDuplicates, _btnRun, _btnStop, btnReset, btnWorkflow, btnBackup, btnRestore, btnCampaigns, _btnGenerateAiTitle]);
+        toolbar.Controls.AddRange([btnImport, btnAdd, _btnEdit, btnDelete, btnFilterDuplicates, _btnRun, _btnStop, btnReset, btnWorkflow, btnBackup, btnRestore, btnCampaigns, _btnGenerateAiTitle]);
 
         _grid = new Guna.UI2.WinForms.Guna2DataGridView
         {
@@ -599,15 +600,31 @@ public sealed class ProductListControl : UserControl
 
     private void UpdateRunButtonText()
     {
-        if (_btnRun == null) return;
         var count = SelectedIndices.Count;
-        if (count > 1)
+        if (_btnRun != null)
         {
-            _btnRun.Text = $"▶ Chạy {count} video đã chọn";
+            if (count > 1)
+            {
+                _btnRun.Text = $"▶ Chạy {count} video đã chọn";
+            }
+            else
+            {
+                _btnRun.Text = "▶ Chạy workflow";
+            }
         }
-        else
+
+        if (_btnEdit != null)
         {
-            _btnRun.Text = "▶ Chạy workflow";
+            if (count > 1)
+            {
+                _btnEdit.Text = $"Sửa ({count})";
+                _btnEdit.Width = 85;
+            }
+            else
+            {
+                _btnEdit.Text = "Sửa";
+                _btnEdit.Width = 72;
+            }
         }
     }
 
@@ -837,6 +854,16 @@ public sealed class ProductListControl : UserControl
             MediaHelper.PlayOrOpenMedia(path, FindForm());
             return;
         }
+
+        // Đảm bảo chỉ chọn duy nhất dòng được click đúp để mở sửa 1 sản phẩm
+        _grid.ClearSelection();
+        _grid.Rows[e.RowIndex].Selected = true;
+        if (e.ColumnIndex >= 0 && e.ColumnIndex < _grid.Columns.Count)
+        {
+            try { _grid.CurrentCell = _grid.Rows[e.RowIndex].Cells[e.ColumnIndex]; } catch { }
+        }
+        UpdateRunButtonText();
+
         EditRequested?.Invoke(this, EventArgs.Empty);
     }
 

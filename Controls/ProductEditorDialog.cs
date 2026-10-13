@@ -469,7 +469,8 @@ public sealed class ProductEditorDialog : Form
             AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
             RowTemplate = { Height = 36 },
             Font = new Font("Segoe UI", 9F),
-            ClipboardCopyMode = DataGridViewClipboardCopyMode.Disable
+            ClipboardCopyMode = DataGridViewClipboardCopyMode.Disable,
+            EditMode = DataGridViewEditMode.EditOnEnter
         };
         _bulkGrid.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
         {
@@ -727,10 +728,13 @@ public sealed class ProductEditorDialog : Form
         if (editItems != null)
         {
             foreach (var item in editItems)
-                _bulkGrid.Rows.Add(_bulkGrid.Rows.Count + 1, item.VideoPath, item.Title, item.ShopeeAffLink);
+            {
+                var rIdx = _bulkGrid.Rows.Add(_bulkGrid.Rows.Count + 1, item.VideoPath, item.Title, item.ShopeeAffLink);
+                _bulkGrid.Rows[rIdx].Tag = item;
+            }
             RefreshBulkLinkPicker(allProducts);
-            HighlightCrossCampaignDuplicates();
             UpdateFileCount(0);
+            HighlightCrossCampaignDuplicates();
         }
 
         // ── Buttons ──
@@ -1055,13 +1059,22 @@ public sealed class ProductEditorDialog : Form
             EnsureDuplicateMap();
             if (_duplicateMap != null)
             {
+                var editJobIds = new HashSet<int>(_bulkGrid.Rows.Cast<DataGridViewRow>()
+                    .Select(r => r.Tag as JobItem)
+                    .Where(j => j != null && j.Id > 0)
+                    .Select(j => j!.Id));
+
                 foreach (DataGridViewRow row in _bulkGrid.Rows)
                 {
                     var p = Convert.ToString(row.Cells["colFile"].Value) ?? "";
                     if (string.IsNullOrWhiteSpace(p)) continue;
                     var norm = PathHelper.NormalizePath(p);
-                    if (_duplicateMap.ContainsKey(norm))
-                        duplicatePaths.Add(p);
+                    if (_duplicateMap.TryGetValue(norm, out var dups))
+                    {
+                        var curJob = row.Tag as JobItem;
+                        if (dups.Any(d => (curJob == null || d.JobId != curJob.Id) && !editJobIds.Contains(d.JobId)))
+                            duplicatePaths.Add(p);
+                    }
                 }
             }
         }
@@ -1109,6 +1122,12 @@ public sealed class ProductEditorDialog : Form
 
         int dupCount = 0;
 
+        // Tập hợp ID của tất cả sản phẩm đang được mở sửa trong bảng này
+        var editJobIds = new HashSet<int>(_bulkGrid.Rows.Cast<DataGridViewRow>()
+            .Select(r => r.Tag as JobItem)
+            .Where(j => j != null && j.Id > 0)
+            .Select(j => j!.Id));
+
         foreach (DataGridViewRow row in _bulkGrid.Rows)
         {
             var filePath = Convert.ToString(row.Cells["colFile"].Value) ?? "";
@@ -1118,30 +1137,49 @@ public sealed class ProductEditorDialog : Form
                 row.Cells["colFile"].Style.BackColor = normalBg;
                 row.Cells["colFile"].Style.ForeColor = normalFg;
                 row.Cells["colFile"].ToolTipText = "";
+                row.DefaultCellStyle.BackColor = Color.Empty;
                 continue;
             }
 
+            var currentJob = row.Tag as JobItem;
             var normalized = PathHelper.NormalizePath(filePath);
             if (_duplicateMap.TryGetValue(normalized, out var duplicates) && duplicates.Count > 0)
             {
-                // Tìm các chiến dịch trùng (group by folder name)
-                var campaignNames = duplicates
-                    .Select(d => d.FolderName)
-                    .Distinct()
-                    .ToList();
+                // Loại trừ chính item đang xét và các item đang cùng sửa trong bảng này
+                var realDuplicates = duplicates.Where(d =>
+                    (currentJob == null || d.JobId != currentJob.Id) &&
+                    !editJobIds.Contains(d.JobId)
+                ).ToList();
 
-                var tooltip = $"⚠️ TRÙNG! Đã có trong {duplicates.Count} sản phẩm:\n" +
-                    string.Join("\n", duplicates.Take(5).Select(d =>
-                        $"  • [{d.FolderName}] {(string.IsNullOrEmpty(d.Title) ? "(không có tiêu đề)" : d.Title)}")) +
-                    (duplicates.Count > 5 ? $"\n  ... và {duplicates.Count - 5} sản phẩm khác" : "");
+                if (realDuplicates.Count > 0)
+                {
+                    // Tìm các chiến dịch trùng (group by folder name)
+                    var campaignNames = realDuplicates
+                        .Select(d => d.FolderName)
+                        .Distinct()
+                        .ToList();
 
-                row.Cells["colFile"].Style.BackColor = warnBg;
-                row.Cells["colFile"].Style.ForeColor = warnFg;
-                row.Cells["colFile"].ToolTipText = tooltip;
+                    var tooltip = $"⚠️ TRÙNG! Đã có trong {realDuplicates.Count} sản phẩm:\n" +
+                        string.Join("\n", realDuplicates.Take(5).Select(d =>
+                            $"  • [{d.FolderName}] {(string.IsNullOrEmpty(d.Title) ? "(không có tiêu đề)" : d.Title)}")) +
+                        (realDuplicates.Count > 5 ? $"\n  ... và {realDuplicates.Count - 5} sản phẩm khác" : "");
 
-                // Highlight cả dòng nhẹ
-                row.DefaultCellStyle.BackColor = Color.FromArgb(255, 251, 235);
-                dupCount++;
+                    row.Cells["colFile"].Style.BackColor = warnBg;
+                    row.Cells["colFile"].Style.ForeColor = warnFg;
+                    row.Cells["colFile"].ToolTipText = tooltip;
+
+                    // Highlight cả dòng nhẹ
+                    row.DefaultCellStyle.BackColor = Color.FromArgb(255, 251, 235);
+                    dupCount++;
+                }
+                else
+                {
+                    // Không có trùng với bên ngoài -> giữ màu bình thường
+                    row.Cells["colFile"].Style.BackColor = normalBg;
+                    row.Cells["colFile"].Style.ForeColor = normalFg;
+                    row.Cells["colFile"].ToolTipText = "";
+                    row.DefaultCellStyle.BackColor = Color.Empty;
+                }
             }
             else
             {
@@ -1154,11 +1192,19 @@ public sealed class ProductEditorDialog : Form
         }
 
         // Cập nhật file count label nếu có trùng
-        if (dupCount > 0 && _fileCountLabel != null)
+        if (_fileCountLabel != null)
         {
             var total = _bulkGrid.Rows.Count;
-            _fileCountLabel.Text = $"{total} bài viết (⚠️ {dupCount} trùng chiến dịch khác)";
-            _fileCountLabel.ForeColor = Color.FromArgb(180, 120, 0);
+            if (dupCount > 0)
+            {
+                _fileCountLabel.Text = $"{total} bài viết (⚠️ {dupCount} trùng chiến dịch khác)";
+                _fileCountLabel.ForeColor = Color.FromArgb(180, 120, 0);
+            }
+            else
+            {
+                _fileCountLabel.Text = $"{total} bài viết";
+                _fileCountLabel.ForeColor = total > 0 ? Color.FromArgb(0, 161, 112) : Color.FromArgb(140, 145, 165);
+            }
         }
     }
 
@@ -1240,17 +1286,47 @@ public sealed class ProductEditorDialog : Form
                     if (bfi.Id == -1) bulkFolderId = -1; // special flag for keep original
                     else if (bfi.Id > 0) bulkFolderId = bfi.Id;
                 }
-                
-                BulkResults.Add(new JobItem
+
+                var existingItem = row.Tag as JobItem;
+                if (existingItem != null)
                 {
-                    FolderId = bulkFolderId,
-                    VideoPath = file,
-                    Title = title,
-                    ShopeeAffLink = link,
-                    Status = JobStatus.Waiting,
-                    ShopeeStatus = JobStatus.ShopeePending,
-                    FbStatus = JobStatus.FacebookPending
-                });
+                    var updated = new JobItem
+                    {
+                        Id = existingItem.Id,
+                        FolderId = bulkFolderId == -1 ? existingItem.FolderId : (bulkFolderId ?? existingItem.FolderId),
+                        VideoPath = file,
+                        Title = title,
+                        ShopeeAffLink = link,
+                        Status = existingItem.Status,
+                        ShopeeStatus = existingItem.ShopeeStatus,
+                        FbStatus = existingItem.FbStatus,
+                        Log = existingItem.Log,
+                        Data = existingItem.Data,
+                        FinishedAt = existingItem.FinishedAt,
+                        IsAiTitleGenerated = existingItem.IsAiTitleGenerated
+                    };
+
+                    // Nếu đổi đường dẫn video/ảnh thì reset trạng thái chờ chạy lại
+                    if (!string.Equals(existingItem.VideoPath, file, StringComparison.OrdinalIgnoreCase))
+                    {
+                        JobStatus.Reset(updated);
+                    }
+
+                    BulkResults.Add(updated);
+                }
+                else
+                {
+                    BulkResults.Add(new JobItem
+                    {
+                        FolderId = bulkFolderId == -1 ? null : bulkFolderId,
+                        VideoPath = file,
+                        Title = title,
+                        ShopeeAffLink = link,
+                        Status = JobStatus.Waiting,
+                        ShopeeStatus = JobStatus.ShopeePending,
+                        FbStatus = JobStatus.FacebookPending
+                    });
+                }
             }
 
             if (BulkResults.Count == 1)
