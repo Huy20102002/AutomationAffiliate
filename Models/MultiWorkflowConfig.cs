@@ -34,4 +34,14 @@ public sealed class MultiWorkflowConfig
 
     // Thời gian chờ tải lên / upload hoàn tất sau mỗi quy trình (giây)
     public int UploadWaitTimeoutSeconds { get; set; } = 10;
+
+    // Giới hạn số video riêng cho Shopee (mặc định 50 video/ngày, Facebook không giới hạn)
+    public bool LimitShopeeJobs { get; set; } = true;
+    public int MaxShopeeJobs { get; set; } = 50;
+
+    // Tự động tắt ứng dụng sau khi hoàn tất
+    public bool AutoCloseAppOnFinish { get; set; } = false;
+
+    // Tự động đưa máy tính vào chế độ Ngủ (Sleep) sau khi hoàn tất
+    public bool AutoSleepPcOnFinish { get; set; } = false;
 }

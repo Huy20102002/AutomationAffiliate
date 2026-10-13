@@ -9,6 +9,8 @@ using ReaLTaiizor.Util;
 using ShopeeVideoUploader.Controls;
 using ShopeeVideoUploader.Models;
 using ShopeeVideoUploader.Services;
+using System.Runtime.InteropServices;
+using System.Diagnostics;
 
 namespace ShopeeVideoUploader;
 
@@ -4941,6 +4943,7 @@ public partial class MainForm : Form
         bool limitJobCount = false;
         int maxJobsToRun = 50;
         bool autoCloseAppOnFinish = false;
+        bool autoSleepPcOnFinish = false;
         int folderId = (cboMainFolderSelect?.SelectedItem as ShopeeVideoUploader.Models.FolderItem)?.Id ?? -1;
 
         var availableWfs = cboWorkflowProfiles.Items.Cast<string>().ToList();
@@ -4957,6 +4960,7 @@ public partial class MainForm : Form
             limitJobCount = dialog.LimitJobCount;
             maxJobsToRun = dialog.MaxJobsToRun;
             autoCloseAppOnFinish = dialog.AutoCloseAppOnFinish;
+            autoSleepPcOnFinish = dialog.AutoSleepPcOnFinish;
         }
 
         if (!isMultiWorkflow && _workflowSteps.Count == 0)
@@ -4986,11 +4990,9 @@ public partial class MainForm : Form
             jobsToRun = jobsToRun.Where(j => !string.IsNullOrWhiteSpace(j.ShopeeAffLink)).ToList();
         }
 
-        if (limitJobCount && maxJobsToRun > 0 && jobsToRun.Count > maxJobsToRun)
+        if (!isMultiWorkflow && limitJobCount && maxJobsToRun > 0 && jobsToRun.Count > maxJobsToRun)
         {
-            var pending = isMultiWorkflow
-                ? jobsToRun.Where(j => !JobStatus.IsCompleted(j, multiConfig.Platform1) || !JobStatus.IsCompleted(j, multiConfig.Platform2)).ToList()
-                : jobsToRun.Where(j => !JobStatus.IsCompleted(j, targetPlatform)).ToList();
+            var pending = jobsToRun.Where(j => !JobStatus.IsCompleted(j, targetPlatform)).ToList();
             if (pending.Count >= maxJobsToRun)
             {
                 jobsToRun = pending.Take(maxJobsToRun).ToList();
@@ -5064,11 +5066,11 @@ public partial class MainForm : Form
 
         if (isMultiWorkflow)
         {
-            await ExecuteMultiWorkflowRunAsync(jobsToRun, multiConfig, useAiTitle, delayMin, delayMax, campaignName, autoCloseAppOnFinish);
+            await ExecuteMultiWorkflowRunAsync(jobsToRun, multiConfig, useAiTitle, delayMin, delayMax, campaignName, autoCloseAppOnFinish, autoSleepPcOnFinish);
         }
         else
         {
-            await ExecuteWorkflowRunAsync(jobsToRun, targetPlatform, useAiTitle, delayMin, delayMax, campaignName, autoCloseAppOnFinish);
+            await ExecuteWorkflowRunAsync(jobsToRun, targetPlatform, useAiTitle, delayMin, delayMax, campaignName, autoCloseAppOnFinish, autoSleepPcOnFinish);
         }
     }
 
@@ -5079,7 +5081,8 @@ public partial class MainForm : Form
         int delayMin,
         int delayMax,
         string campaignName,
-        bool autoCloseAppOnFinish = false)
+        bool autoCloseAppOnFinish = false,
+        bool autoSleepPcOnFinish = false)
     {
         Func<JobItem, Task>? generateTitleFunc = null;
         if (useAiTitle)
@@ -5257,9 +5260,9 @@ public partial class MainForm : Form
             _cts = null;
         }
 
-        if (autoCloseAppOnFinish && (token.IsCancellationRequested == false))
+        if ((autoCloseAppOnFinish || autoSleepPcOnFinish) && (token.IsCancellationRequested == false))
         {
-            await PromptAutoCloseCountdownAsync();
+            await PromptFinishActionCountdownAsync(autoCloseAppOnFinish, autoSleepPcOnFinish);
         }
     }
 
@@ -5281,7 +5284,8 @@ public partial class MainForm : Form
         int delayMin,
         int delayMax,
         string campaignName,
-        bool autoCloseAppOnFinish = false)
+        bool autoCloseAppOnFinish = false,
+        bool autoSleepPcOnFinish = false)
     {
         string path1 = GetPlatformWorkflowPath(multiConfig.WorkflowFile1);
         string path2 = GetPlatformWorkflowPath(multiConfig.WorkflowFile2);
@@ -5391,6 +5395,10 @@ public partial class MainForm : Form
         _ = _telegramBotService?.SendRunStartedNotificationAsync(jobsToRun.Count, $"{multiConfig.Platform1}+{multiConfig.Platform2}", campaignName);
 
         var originalSteps = _workflowSteps.ToList();
+        bool isP1Shopee = multiConfig.Platform1.IndexOf("Shopee", StringComparison.OrdinalIgnoreCase) >= 0;
+        bool isP2Shopee = multiConfig.Platform2.IndexOf("Shopee", StringComparison.OrdinalIgnoreCase) >= 0;
+        int shopeeCompletedCount = 0;
+        int maxShopeeLimit = (multiConfig.LimitShopeeJobs && multiConfig.MaxShopeeJobs > 0) ? multiConfig.MaxShopeeJobs : int.MaxValue;
 
         try
         {
@@ -5411,10 +5419,17 @@ public partial class MainForm : Form
 
                     // 1. Chạy Quy trình 1
                     bool p1Done = JobStatus.IsCompleted(job, multiConfig.Platform1);
+                    bool p1SkippedLimit = isP1Shopee && multiConfig.LimitShopeeJobs && (shopeeCompletedCount >= maxShopeeLimit);
                     bool wf1Success = p1Done;
                     if (p1Done && multiConfig.SkipIfPlatformAlreadyDone)
                     {
                         Logger.Info($"[Pipeline] Video #{job.Id}: Nền tảng {multiConfig.Platform1} đã up trước đó, tự động bỏ qua.");
+                    }
+                    else if (p1SkippedLimit)
+                    {
+                        job.Log = $"[1/2: {multiConfig.Platform1}] Đã đạt giới hạn ({maxShopeeLimit} video Shopee), bỏ qua.";
+                        UpdateJobRow(job, JobStatus.Waiting, job.Log, multiConfig.Platform1);
+                        Logger.Info($"[Pipeline] Video #{job.Id}: Nền tảng {multiConfig.Platform1} đã đạt giới hạn ({maxShopeeLimit} video/ngày), bỏ qua.");
                     }
                     else
                     {
@@ -5477,6 +5492,7 @@ public partial class MainForm : Form
                             job.Log = $"[1/2: {multiConfig.Platform1}] Đã đăng thành công!";
                             UpdateJobRow(job, JobStatus.Running, job.Log, multiConfig.Platform1);
                             wf1Success = true;
+                            if (isP1Shopee) shopeeCompletedCount++;
                             Logger.Info($"[Pipeline] Video #{job.Id}: Hoàn tất {multiConfig.Platform1}.");
                         }
                         catch (OperationCanceledException) { throw; }
@@ -5496,7 +5512,8 @@ public partial class MainForm : Form
 
                     // Nghỉ giữa 2 quy trình nếu quy trình 2 cần chạy
                     bool p2Done = JobStatus.IsCompleted(job, multiConfig.Platform2);
-                    if (!p2Done && multiConfig.DelayBetweenWorkflowsSeconds > 0 && (wf1Success || multiConfig.ContinueNextWorkflowOnFailure))
+                    bool p2SkippedLimit = isP2Shopee && multiConfig.LimitShopeeJobs && (shopeeCompletedCount >= maxShopeeLimit);
+                    if (!p2Done && !p2SkippedLimit && multiConfig.DelayBetweenWorkflowsSeconds > 0 && (wf1Success || multiConfig.ContinueNextWorkflowOnFailure))
                     {
                         var delaySec = multiConfig.DelayBetweenWorkflowsSeconds;
                         var delayInfo = $"Nghỉ {delaySec}s trước khi chuyển sang {multiConfig.Platform2}...";
@@ -5513,6 +5530,12 @@ public partial class MainForm : Form
                     if (p2Done && multiConfig.SkipIfPlatformAlreadyDone)
                     {
                         Logger.Info($"[Pipeline] Video #{job.Id}: Nền tảng {multiConfig.Platform2} đã up trước đó, tự động bỏ qua.");
+                    }
+                    else if (p2SkippedLimit)
+                    {
+                        job.Log = $"[2/2: {multiConfig.Platform2}] Đã đạt giới hạn ({maxShopeeLimit} video Shopee), bỏ qua.";
+                        UpdateJobRow(job, JobStatus.Waiting, job.Log, multiConfig.Platform2);
+                        Logger.Info($"[Pipeline] Video #{job.Id}: Nền tảng {multiConfig.Platform2} đã đạt giới hạn ({maxShopeeLimit} video/ngày), bỏ qua.");
                     }
                     else if (wf1Success || multiConfig.ContinueNextWorkflowOnFailure)
                     {
@@ -5575,6 +5598,7 @@ public partial class MainForm : Form
                             job.Log = $"[2/2: {multiConfig.Platform2}] Đã đăng thành công!";
                             UpdateJobRow(job, JobStatus.Running, job.Log, multiConfig.Platform2);
                             wf2Success = true;
+                            if (isP2Shopee) shopeeCompletedCount++;
                             Logger.Info($"[Pipeline] Video #{job.Id}: Hoàn tất {multiConfig.Platform2}.");
                         }
                         catch (OperationCanceledException) { throw; }
@@ -5592,6 +5616,20 @@ public partial class MainForm : Form
                     {
                         job.Status = JobStatus.Succeeded;
                         job.Log = $"Hoàn tất cả {multiConfig.Platform1} & {multiConfig.Platform2}!";
+                        UpdateJobRow(job, JobStatus.Succeeded, job.Log);
+                        BeginInvoke(() => progressBar.Value = Math.Min(progressBar.Maximum, progressBar.Value + 1));
+                    }
+                    else if (wf1Success && p2SkippedLimit)
+                    {
+                        job.Status = JobStatus.Succeeded;
+                        job.Log = $"Đã up {multiConfig.Platform1} (Shopee đạt giới hạn {maxShopeeLimit} vd)";
+                        UpdateJobRow(job, JobStatus.Succeeded, job.Log);
+                        BeginInvoke(() => progressBar.Value = Math.Min(progressBar.Maximum, progressBar.Value + 1));
+                    }
+                    else if (p1SkippedLimit && wf2Success)
+                    {
+                        job.Status = JobStatus.Succeeded;
+                        job.Log = $"Đã up {multiConfig.Platform2} (Shopee đạt giới hạn {maxShopeeLimit} vd)";
                         UpdateJobRow(job, JobStatus.Succeeded, job.Log);
                         BeginInvoke(() => progressBar.Value = Math.Min(progressBar.Maximum, progressBar.Value + 1));
                     }
@@ -5640,6 +5678,12 @@ public partial class MainForm : Form
                 var pendingWf1 = multiConfig.SkipIfPlatformAlreadyDone
                     ? jobsToRun.Where(j => !JobStatus.IsCompleted(j, multiConfig.Platform1)).ToList()
                     : jobsToRun.ToList();
+
+                if (isP1Shopee && multiConfig.LimitShopeeJobs && multiConfig.MaxShopeeJobs > 0 && pendingWf1.Count > multiConfig.MaxShopeeJobs)
+                {
+                    Logger.Info($"[Batch] Giới hạn Shopee ({multiConfig.Platform1}) lấy {multiConfig.MaxShopeeJobs} video đầu tiên.");
+                    pendingWf1 = pendingWf1.Take(multiConfig.MaxShopeeJobs).ToList();
+                }
 
                 if (pendingWf1.Count > 0)
                 {
@@ -5694,6 +5738,12 @@ public partial class MainForm : Form
                     ? jobsToRun.Where(j => !JobStatus.IsCompleted(j, multiConfig.Platform2)).ToList()
                     : jobsToRun.ToList();
 
+                if (isP2Shopee && multiConfig.LimitShopeeJobs && multiConfig.MaxShopeeJobs > 0 && pendingWf2.Count > multiConfig.MaxShopeeJobs)
+                {
+                    Logger.Info($"[Batch] Giới hạn Shopee ({multiConfig.Platform2}) lấy {multiConfig.MaxShopeeJobs} video đầu tiên.");
+                    pendingWf2 = pendingWf2.Take(multiConfig.MaxShopeeJobs).ToList();
+                }
+
                 if (pendingWf2.Count > 0)
                 {
                     SetStatus($"[Lượt 2/2] Đang chạy {multiConfig.Platform2} ({pendingWf2.Count} video)...");
@@ -5740,7 +5790,7 @@ public partial class MainForm : Form
             var finishTimeStr = DateTime.Now.ToString("dd/MM/yyyy HH:mm");
             SetStatus($"Hoàn tất chuỗi liên hoàn lúc {finishTimeStr}");
             var duration = DateTime.Now - startTime;
-            var succeeded = jobsToRun.Count(j => JobStatus.IsCompleted(j, multiConfig.Platform1) && JobStatus.IsCompleted(j, multiConfig.Platform2));
+            var succeeded = jobsToRun.Count(j => j.Status == JobStatus.Succeeded || (JobStatus.IsCompleted(j, multiConfig.Platform1) && JobStatus.IsCompleted(j, multiConfig.Platform2)));
             var failed = jobsToRun.Count(j => j.Status == JobStatus.Failed);
             _ = _telegramBotService?.SendBatchFinishedNotificationAsync(jobsToRun.Count, succeeded, failed, duration, $"{multiConfig.Platform1}+{multiConfig.Platform2}");
             Logger.Info($"[Pipeline] Hoàn tất chuỗi liên hoàn lúc {finishTimeStr}. Thành công: {succeeded}, Thất bại: {failed}.");
@@ -5772,22 +5822,57 @@ public partial class MainForm : Form
             _cts = null;
         }
 
-        if (autoCloseAppOnFinish && (token.IsCancellationRequested == false))
+        if ((autoCloseAppOnFinish || autoSleepPcOnFinish) && (token.IsCancellationRequested == false))
         {
-            await PromptAutoCloseCountdownAsync();
+            await PromptFinishActionCountdownAsync(autoCloseAppOnFinish, autoSleepPcOnFinish);
         }
     }
 
-    private async Task PromptAutoCloseCountdownAsync()
+    [DllImport("PowrProf.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetSuspendState(bool hibernate, bool forceCritical, bool disableWakeEvent);
+
+    private static void SleepComputer()
+    {
+        try
+        {
+            Logger.Info("[System] Đang đưa máy tính vào chế độ Ngủ (Sleep)...");
+            if (!SetSuspendState(false, true, false))
+            {
+                Application.SetSuspendState(PowerState.Suspend, true, false);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[System] Lỗi khi gọi SetSuspendState: {ex.Message}", ex);
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "rundll32.exe",
+                    Arguments = "powrprof.dll,SetSuspendState 0,1,0",
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                });
+            }
+            catch { }
+        }
+    }
+
+    private async Task PromptFinishActionCountdownAsync(bool autoCloseApp, bool autoSleepPc)
     {
         if (IsDisposed || !IsHandleCreated) return;
+        if (!autoCloseApp && !autoSleepPc) return;
 
         await Task.Yield();
 
+        string dialogTitle = autoSleepPc ? "🌙 Tự động chuyển sang chế độ Ngủ (Sleep)" : "Tự động tắt ứng dụng";
+        string headerText = autoSleepPc ? "✓ Đã chạy xong! Chuẩn bị Sleep máy tính" : "✓ Đã chạy xong tất cả công việc!";
+
         using var cdForm = new Form
         {
-            Text = "Tự động tắt ứng dụng",
-            ClientSize = new Size(420, 210),
+            Text = dialogTitle,
+            ClientSize = new Size(440, 215),
             StartPosition = FormStartPosition.CenterScreen,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
@@ -5799,7 +5884,7 @@ public partial class MainForm : Form
 
         var lblHeader = new Label
         {
-            Text = "✓ Đã chạy xong tất cả công việc!",
+            Text = headerText,
             Font = new Font("Segoe UI Semibold", 12F, FontStyle.Bold),
             ForeColor = Color.FromArgb(16, 185, 129),
             Location = new Point(24, 20),
@@ -5807,11 +5892,20 @@ public partial class MainForm : Form
         };
 
         int remainingSeconds = 15;
+        string GetMsgText(int s)
+        {
+            if (autoSleepPc)
+            {
+                return $"Máy tính sẽ tự động chuyển sang chế độ Ngủ (Sleep) sau {s} giây...\nNhấn 'Hủy bỏ' nếu bạn muốn tiếp tục sử dụng máy.";
+            }
+            return $"Ứng dụng sẽ tự động đóng sau {s} giây...\nNhấn 'Hủy bỏ' nếu bạn muốn tiếp tục sử dụng.";
+        }
+
         var lblMsg = new Label
         {
-            Text = $"Ứng dụng sẽ tự động đóng sau {remainingSeconds} giây...\nNhấn 'Hủy bỏ' nếu bạn muốn tiếp tục sử dụng.",
+            Text = GetMsgText(remainingSeconds),
             Location = new Point(26, 56),
-            Size = new Size(368, 50),
+            Size = new Size(390, 52),
             Font = new Font("Segoe UI", 9.5F),
             ForeColor = Color.FromArgb(75, 85, 99)
         };
@@ -5819,7 +5913,7 @@ public partial class MainForm : Form
         var btnCancel = new Guna.UI2.WinForms.Guna2Button
         {
             Text = "Hủy bỏ (Tiếp tục dùng)",
-            Location = new Point(115, 130),
+            Location = new Point(125, 132),
             Size = new Size(190, 42),
             BorderRadius = 8,
             FillColor = Color.FromArgb(239, 68, 68),
@@ -5843,7 +5937,7 @@ public partial class MainForm : Form
             }
             else
             {
-                lblMsg.Text = $"Ứng dụng sẽ tự động đóng sau {remainingSeconds} giây...\nNhấn 'Hủy bỏ' nếu bạn muốn tiếp tục sử dụng.";
+                lblMsg.Text = GetMsgText(remainingSeconds);
             }
         };
 
@@ -5853,15 +5947,28 @@ public partial class MainForm : Form
 
         if (result == DialogResult.OK)
         {
-            Logger.Info("[System] Đã tự động tắt ứng dụng theo cấu hình sau khi hoàn thành quy trình.");
             SaveAutoSavedWorkflow();
             try { StopScrcpy(); } catch { }
-            Application.Exit();
+
+            if (autoSleepPc)
+            {
+                Logger.Info("[System] Người dùng đã xác nhận / hết thời gian chờ: Đưa máy tính vào chế độ Sleep.");
+                SleepComputer();
+                if (autoCloseApp)
+                {
+                    Application.Exit();
+                }
+            }
+            else if (autoCloseApp)
+            {
+                Logger.Info("[System] Đã tự động tắt ứng dụng theo cấu hình sau khi hoàn thành quy trình.");
+                Application.Exit();
+            }
         }
         else
         {
-            Logger.Info("[System] Người dùng đã hủy tự động tắt ứng dụng.");
-            SetStatus("Đã hủy tự động tắt ứng dụng.");
+            Logger.Info("[System] Người dùng đã hủy tự động tắt ứng dụng / Sleep máy.");
+            SetStatus("Đã hủy tự động ngủ máy / tắt ứng dụng.");
         }
     }
 
