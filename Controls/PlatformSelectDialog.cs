@@ -22,6 +22,7 @@ public sealed class PlatformSelectDialog : Form
     public bool LimitJobCount { get; private set; }
     public int MaxJobsToRun { get; private set; } = 50;
     public bool AutoCloseAppOnFinish { get; private set; }
+    public bool AutoSleepPhoneOnFinish { get; private set; }
     public bool AutoSleepPcOnFinish { get; private set; }
 
     private readonly Guna2RadioButton _rbSingle;
@@ -50,7 +51,7 @@ public sealed class PlatformSelectDialog : Form
     private readonly Guna2NumericUpDown _numMaxJobs;
     private readonly Label _lblLimitShopeeNote;
     private readonly Guna2CheckBox _chkAutoClose;
-    private readonly Guna2CheckBox _chkSleepPc;
+    private readonly Guna2CheckBox _chkSleepPhone;
 
     // Bottom action buttons
     private readonly Guna2Button _btnShopee;
@@ -163,7 +164,7 @@ public sealed class PlatformSelectDialog : Form
         _pnlMultiControls = new Panel
         {
             Location = new Point(18, 125),
-            Size = new Size(475, 255),
+            Size = new Size(475, 280),
             BorderStyle = BorderStyle.FixedSingle,
             BackColor = Color.FromArgb(253, 250, 255),
             Visible = savedConfig.Enabled
@@ -296,12 +297,24 @@ public sealed class PlatformSelectDialog : Form
             Cursor = Cursors.Hand
         };
 
+        _chkContinueOnError = new Guna2CheckBox
+        {
+            Text = "Nếu quy trình 1 bị lỗi, vẫn tiếp tục chạy quy trình 2",
+            Location = new Point(12, 250),
+            AutoSize = true,
+            Font = new Font("Segoe UI Semibold", 8.5F),
+            ForeColor = Color.FromArgb(71, 85, 105),
+            Checked = savedConfig.ContinueNextWorkflowOnFailure,
+            Cursor = Cursors.Hand
+        };
+
         _pnlMultiControls.Controls.AddRange([
             lblWf1, _cboWf1, _cboPlatform1,
             btnSwap,
             lblWf2, _cboWf2, _cboPlatform2,
             lblMode, _rbModePerVideo, _rbModeBatch,
-            _chkSkipCompleted
+            _chkSkipCompleted,
+            _chkContinueOnError
         ]);
 
         // 4. Panel Single Notice
@@ -516,15 +529,15 @@ public sealed class PlatformSelectDialog : Form
             Cursor = Cursors.Hand
         };
 
-        // Đưa máy vào chế độ Ngủ (Sleep)
-        _chkSleepPc = new Guna2CheckBox
+        // Đưa điện thoại vào chế độ Ngủ (Tắt màn hình)
+        _chkSleepPhone = new Guna2CheckBox
         {
-            Text = "🌙 Đưa máy tính vào chế độ Ngủ (Sleep) sau khi hoàn tất",
+            Text = "📱 Đưa điện thoại vào chế độ Ngủ (Tắt màn hình) sau khi hoàn tất",
             Location = new Point(20, startY + 252),
             AutoSize = true,
             Font = new Font("Segoe UI Semibold", 9F),
             ForeColor = Color.FromArgb(30, 64, 175),
-            Checked = savedConfig.AutoSleepPcOnFinish,
+            Checked = savedConfig.AutoSleepPhoneOnFinish,
             Cursor = Cursors.Hand
         };
 
@@ -599,8 +612,8 @@ public sealed class PlatformSelectDialog : Form
                 _chkLimitJobs.Text = "Giới hạn video Shopee:";
                 _lblLimitShopeeNote.Visible = true;
                 _pnlMultiControls.Location = new Point(18, 125);
-                pnlTimeConfig.Location = new Point(18, 388);
-                UpdateYPositions(388);
+                pnlTimeConfig.Location = new Point(18, 412);
+                UpdateYPositions(412);
             }
             else
             {
@@ -632,7 +645,7 @@ public sealed class PlatformSelectDialog : Form
             cur += 34;
             _chkAutoClose.Location = new Point(20, cur);
             cur += 30;
-            _chkSleepPc.Location = new Point(20, cur);
+            _chkSleepPhone.Location = new Point(20, cur);
             cur += 38;
             _btnShopee.Location = new Point(20, cur);
             _btnFb.Location = new Point(265, cur);
@@ -655,7 +668,7 @@ public sealed class PlatformSelectDialog : Form
             lblDelayVideos, _numMin, lblTo, _numMax,
             _chkShuffle,
             _chkLimitJobs, _numMaxJobs, _lblLimitShopeeNote,
-            _chkAutoClose, _chkSleepPc,
+            _chkAutoClose, _chkSleepPhone,
             _btnShopee, _btnFb, _btnStartMulti
         ]);
     }
@@ -680,7 +693,8 @@ public sealed class PlatformSelectDialog : Form
         LimitJobCount = _chkLimitJobs.Checked;
         MaxJobsToRun = (int)_numMaxJobs.Value;
         AutoCloseAppOnFinish = _chkAutoClose.Checked;
-        AutoSleepPcOnFinish = _chkSleepPc.Checked;
+        AutoSleepPhoneOnFinish = _chkSleepPhone?.Checked ?? false;
+        AutoSleepPcOnFinish = false;
 
         MultiConfig = new MultiWorkflowConfig
         {
@@ -690,14 +704,15 @@ public sealed class PlatformSelectDialog : Form
             WorkflowFile2 = _cboWf2.SelectedItem as string ?? string.Empty,
             Platform2 = _cboPlatform2.SelectedItem as string ?? "Shopee",
             Mode = _rbModeBatch.Checked ? MultiWorkflowExecutionMode.BatchByWorkflow : MultiWorkflowExecutionMode.PerVideo,
-            SkipIfPlatformAlreadyDone = _chkSkipCompleted.Checked,
-            ContinueNextWorkflowOnFailure = _chkContinueOnError.Checked,
+            SkipIfPlatformAlreadyDone = _chkSkipCompleted?.Checked ?? true,
+            ContinueNextWorkflowOnFailure = _chkContinueOnError?.Checked ?? false,
             DelayBetweenWorkflowsSeconds = (int)_numDelayWorkflows.Value,
             UploadWaitTimeoutSeconds = (int)_numUploadWait.Value,
             LimitShopeeJobs = _chkLimitJobs.Checked,
             MaxShopeeJobs = (int)_numMaxJobs.Value,
             AutoCloseAppOnFinish = _chkAutoClose.Checked,
-            AutoSleepPcOnFinish = _chkSleepPc.Checked
+            AutoSleepPhoneOnFinish = _chkSleepPhone?.Checked ?? false,
+            AutoSleepPcOnFinish = false
         };
 
         // Lưu cấu hình cho lần sau

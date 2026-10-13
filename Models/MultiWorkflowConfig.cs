@@ -42,6 +42,9 @@ public sealed class MultiWorkflowConfig
     // Tự động tắt ứng dụng sau khi hoàn tất
     public bool AutoCloseAppOnFinish { get; set; } = false;
 
+    // Tự động đưa điện thoại vào chế độ Ngủ (Tắt màn hình / Lock) sau khi hoàn tất
+    public bool AutoSleepPhoneOnFinish { get; set; } = false;
+
     // Tự động đưa máy tính vào chế độ Ngủ (Sleep) sau khi hoàn tất
     public bool AutoSleepPcOnFinish { get; set; } = false;
 }

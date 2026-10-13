@@ -4943,7 +4943,7 @@ public partial class MainForm : Form
         bool limitJobCount = false;
         int maxJobsToRun = 50;
         bool autoCloseAppOnFinish = false;
-        bool autoSleepPcOnFinish = false;
+        bool autoSleepPhoneOnFinish = false;
         int folderId = (cboMainFolderSelect?.SelectedItem as ShopeeVideoUploader.Models.FolderItem)?.Id ?? -1;
 
         var availableWfs = cboWorkflowProfiles.Items.Cast<string>().ToList();
@@ -4960,7 +4960,7 @@ public partial class MainForm : Form
             limitJobCount = dialog.LimitJobCount;
             maxJobsToRun = dialog.MaxJobsToRun;
             autoCloseAppOnFinish = dialog.AutoCloseAppOnFinish;
-            autoSleepPcOnFinish = dialog.AutoSleepPcOnFinish;
+            autoSleepPhoneOnFinish = dialog.AutoSleepPhoneOnFinish;
         }
 
         if (!isMultiWorkflow && _workflowSteps.Count == 0)
@@ -5066,11 +5066,11 @@ public partial class MainForm : Form
 
         if (isMultiWorkflow)
         {
-            await ExecuteMultiWorkflowRunAsync(jobsToRun, multiConfig, useAiTitle, delayMin, delayMax, campaignName, autoCloseAppOnFinish, autoSleepPcOnFinish);
+            await ExecuteMultiWorkflowRunAsync(jobsToRun, multiConfig, useAiTitle, delayMin, delayMax, campaignName, autoCloseAppOnFinish, autoSleepPhoneOnFinish);
         }
         else
         {
-            await ExecuteWorkflowRunAsync(jobsToRun, targetPlatform, useAiTitle, delayMin, delayMax, campaignName, autoCloseAppOnFinish, autoSleepPcOnFinish);
+            await ExecuteWorkflowRunAsync(jobsToRun, targetPlatform, useAiTitle, delayMin, delayMax, campaignName, autoCloseAppOnFinish, autoSleepPhoneOnFinish);
         }
     }
 
@@ -5082,7 +5082,7 @@ public partial class MainForm : Form
         int delayMax,
         string campaignName,
         bool autoCloseAppOnFinish = false,
-        bool autoSleepPcOnFinish = false)
+        bool autoSleepPhoneOnFinish = false)
     {
         Func<JobItem, Task>? generateTitleFunc = null;
         if (useAiTitle)
@@ -5260,9 +5260,14 @@ public partial class MainForm : Form
             _cts = null;
         }
 
-        if ((autoCloseAppOnFinish || autoSleepPcOnFinish) && (token.IsCancellationRequested == false))
+        if (autoSleepPhoneOnFinish && (token.IsCancellationRequested == false))
         {
-            await PromptFinishActionCountdownAsync(autoCloseAppOnFinish, autoSleepPcOnFinish);
+            await SleepConnectedDeviceAsync();
+        }
+
+        if (autoCloseAppOnFinish && (token.IsCancellationRequested == false))
+        {
+            await PromptAutoCloseCountdownAsync();
         }
     }
 
@@ -5285,7 +5290,7 @@ public partial class MainForm : Form
         int delayMax,
         string campaignName,
         bool autoCloseAppOnFinish = false,
-        bool autoSleepPcOnFinish = false)
+        bool autoSleepPhoneOnFinish = false)
     {
         string path1 = GetPlatformWorkflowPath(multiConfig.WorkflowFile1);
         string path2 = GetPlatformWorkflowPath(multiConfig.WorkflowFile2);
@@ -5822,57 +5827,53 @@ public partial class MainForm : Form
             _cts = null;
         }
 
-        if ((autoCloseAppOnFinish || autoSleepPcOnFinish) && (token.IsCancellationRequested == false))
+        if (autoSleepPhoneOnFinish && (token.IsCancellationRequested == false))
         {
-            await PromptFinishActionCountdownAsync(autoCloseAppOnFinish, autoSleepPcOnFinish);
+            await SleepConnectedDeviceAsync();
+        }
+
+        if (autoCloseAppOnFinish && (token.IsCancellationRequested == false))
+        {
+            await PromptAutoCloseCountdownAsync();
         }
     }
 
-    [DllImport("PowrProf.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetSuspendState(bool hibernate, bool forceCritical, bool disableWakeEvent);
-
-    private static void SleepComputer()
+    private async Task SleepConnectedDeviceAsync()
     {
         try
         {
-            Logger.Info("[System] Đang đưa máy tính vào chế độ Ngủ (Sleep)...");
-            if (!SetSuspendState(false, true, false))
+            if (_isIosMode)
             {
-                Application.SetSuspendState(PowerState.Suspend, true, false);
+                if (!string.IsNullOrEmpty(_currentIosDeviceId))
+                {
+                    Logger.Info($"[Device] Đang đưa điện thoại iOS ({_currentIosDeviceId}) vào chế độ Ngủ (khóa màn hình)...");
+                    await _iosManager.LockScreenAsync(_currentIosDeviceId);
+                    SetStatus("Đã đưa điện thoại iOS vào chế độ Ngủ (khóa màn hình).");
+                }
+            }
+            else if (_currentDevice != null)
+            {
+                Logger.Info($"[Device] Đang đưa điện thoại Android ({_currentDevice.Serial}) vào chế độ Ngủ (tắt màn hình)...");
+                await _adb.SleepDeviceAsync(_currentDevice);
+                SetStatus("Đã đưa điện thoại Android vào chế độ Ngủ (tắt màn hình).");
             }
         }
         catch (Exception ex)
         {
-            Logger.Error($"[System] Lỗi khi gọi SetSuspendState: {ex.Message}", ex);
-            try
-            {
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "rundll32.exe",
-                    Arguments = "powrprof.dll,SetSuspendState 0,1,0",
-                    CreateNoWindow = true,
-                    UseShellExecute = false
-                });
-            }
-            catch { }
+            Logger.Error($"[Device] Lỗi khi đưa điện thoại vào chế độ Ngủ: {ex.Message}", ex);
         }
     }
 
-    private async Task PromptFinishActionCountdownAsync(bool autoCloseApp, bool autoSleepPc)
+    private async Task PromptAutoCloseCountdownAsync()
     {
         if (IsDisposed || !IsHandleCreated) return;
-        if (!autoCloseApp && !autoSleepPc) return;
 
         await Task.Yield();
 
-        string dialogTitle = autoSleepPc ? "🌙 Tự động chuyển sang chế độ Ngủ (Sleep)" : "Tự động tắt ứng dụng";
-        string headerText = autoSleepPc ? "✓ Đã chạy xong! Chuẩn bị Sleep máy tính" : "✓ Đã chạy xong tất cả công việc!";
-
         using var cdForm = new Form
         {
-            Text = dialogTitle,
-            ClientSize = new Size(440, 215),
+            Text = "Tự động tắt ứng dụng",
+            ClientSize = new Size(420, 210),
             StartPosition = FormStartPosition.CenterScreen,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
@@ -5884,7 +5885,7 @@ public partial class MainForm : Form
 
         var lblHeader = new Label
         {
-            Text = headerText,
+            Text = "✓ Đã chạy xong tất cả công việc!",
             Font = new Font("Segoe UI Semibold", 12F, FontStyle.Bold),
             ForeColor = Color.FromArgb(16, 185, 129),
             Location = new Point(24, 20),
@@ -5892,20 +5893,11 @@ public partial class MainForm : Form
         };
 
         int remainingSeconds = 15;
-        string GetMsgText(int s)
-        {
-            if (autoSleepPc)
-            {
-                return $"Máy tính sẽ tự động chuyển sang chế độ Ngủ (Sleep) sau {s} giây...\nNhấn 'Hủy bỏ' nếu bạn muốn tiếp tục sử dụng máy.";
-            }
-            return $"Ứng dụng sẽ tự động đóng sau {s} giây...\nNhấn 'Hủy bỏ' nếu bạn muốn tiếp tục sử dụng.";
-        }
-
         var lblMsg = new Label
         {
-            Text = GetMsgText(remainingSeconds),
+            Text = $"Ứng dụng sẽ tự động đóng sau {remainingSeconds} giây...\nNhấn 'Hủy bỏ' nếu bạn muốn tiếp tục sử dụng.",
             Location = new Point(26, 56),
-            Size = new Size(390, 52),
+            Size = new Size(368, 50),
             Font = new Font("Segoe UI", 9.5F),
             ForeColor = Color.FromArgb(75, 85, 99)
         };
@@ -5913,7 +5905,7 @@ public partial class MainForm : Form
         var btnCancel = new Guna.UI2.WinForms.Guna2Button
         {
             Text = "Hủy bỏ (Tiếp tục dùng)",
-            Location = new Point(125, 132),
+            Location = new Point(115, 130),
             Size = new Size(190, 42),
             BorderRadius = 8,
             FillColor = Color.FromArgb(239, 68, 68),
@@ -5937,7 +5929,7 @@ public partial class MainForm : Form
             }
             else
             {
-                lblMsg.Text = GetMsgText(remainingSeconds);
+                lblMsg.Text = $"Ứng dụng sẽ tự động đóng sau {remainingSeconds} giây...\nNhấn 'Hủy bỏ' nếu bạn muốn tiếp tục sử dụng.";
             }
         };
 
@@ -5947,28 +5939,15 @@ public partial class MainForm : Form
 
         if (result == DialogResult.OK)
         {
+            Logger.Info("[System] Đã tự động tắt ứng dụng theo cấu hình sau khi hoàn thành quy trình.");
             SaveAutoSavedWorkflow();
             try { StopScrcpy(); } catch { }
-
-            if (autoSleepPc)
-            {
-                Logger.Info("[System] Người dùng đã xác nhận / hết thời gian chờ: Đưa máy tính vào chế độ Sleep.");
-                SleepComputer();
-                if (autoCloseApp)
-                {
-                    Application.Exit();
-                }
-            }
-            else if (autoCloseApp)
-            {
-                Logger.Info("[System] Đã tự động tắt ứng dụng theo cấu hình sau khi hoàn thành quy trình.");
-                Application.Exit();
-            }
+            Application.Exit();
         }
         else
         {
-            Logger.Info("[System] Người dùng đã hủy tự động tắt ứng dụng / Sleep máy.");
-            SetStatus("Đã hủy tự động ngủ máy / tắt ứng dụng.");
+            Logger.Info("[System] Người dùng đã hủy tự động tắt ứng dụng.");
+            SetStatus("Đã hủy tự động tắt ứng dụng.");
         }
     }
 

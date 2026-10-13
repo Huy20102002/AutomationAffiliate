@@ -309,6 +309,23 @@ public class IosManager : IDeviceController, IDisposable
         return "";
     }
 
+    /// <summary>Khóa màn hình / đưa thiết bị iOS vào chế độ ngủ.</summary>
+    public async Task LockScreenAsync(string deviceId, CancellationToken ct = default)
+    {
+        try
+        {
+            var sessionId = await GetSessionIdAsync(deviceId, ct);
+            var url = $"http://127.0.0.1:{deviceId}/session/{sessionId}/wda/lock";
+            var content = new StringContent("{}", Encoding.UTF8, "application/json");
+            await _httpClient.PostAsync(url, content, ct);
+            Logger.Info($"[WDA] Đã gửi lệnh khóa màn hình iOS ({deviceId}).");
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"[WDA] Không thể khóa màn hình iOS: {ex.Message}");
+        }
+    }
+
     // ── pymobiledevice3 AFC integration ──
 
     private static string? _pmdExePath;

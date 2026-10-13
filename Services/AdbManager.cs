@@ -631,6 +631,37 @@ public class AdbManager : IDisposable
         await ShellAsync(device, $"input keyevent {keycode}");
     }
 
+    /// <summary>Đưa điện thoại vào chế độ ngủ (tắt màn hình / khóa máy).</summary>
+    public async Task SleepDeviceAsync(DeviceData device)
+    {
+        EnsureInit();
+        Logger.Info($"[ADB] Đang đưa điện thoại {device.Serial} vào chế độ Ngủ (tắt màn hình)...");
+        try
+        {
+            // KEYCODE_SLEEP = 223: đưa máy vào chế độ sleep an toàn mà không bật ngược lại nếu đã tắt
+            await ShellAsync(device, "input keyevent 223");
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"[ADB] Thử keyevent 223: {ex.Message}");
+        }
+
+        try
+        {
+            var powerState = await ShellAsync(device, "dumpsys power");
+            if (powerState.Contains("mWakefulness=Awake", StringComparison.OrdinalIgnoreCase) ||
+                powerState.Contains("mHoldingDisplaySuspendBlocker=true", StringComparison.OrdinalIgnoreCase))
+            {
+                // Nếu vẫn đang sáng, bấm phím POWER (26) để tắt màn hình
+                await ShellAsync(device, "input keyevent 26");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"[ADB] Kiểm tra dumpsys power: {ex.Message}");
+        }
+    }
+
     /// <summary>Setup ADBKeyBoard làm IME mặc định cho gõ Unicode</summary>
     public async Task SetupAdbKeyboardAsync(DeviceData device)
     {
