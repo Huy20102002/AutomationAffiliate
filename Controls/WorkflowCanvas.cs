@@ -453,6 +453,45 @@ public sealed class WorkflowCanvas : ScrollableControl
             DrawArrow(e.Graphics, connectorPen.Color, end);
         }
 
+        // Vẽ đường nối lặp (Loop return connector) từ LoopEnd quay về LoopStart
+        using var loopConnectorPen = new Pen(Color.FromArgb(168, 85, 247), 1.8f) { DashStyle = DashStyle.Dash };
+        for (var i = 0; i < rects.Count && i < _steps.Count; i++)
+        {
+            if (_steps[i].IsLoopEnd && !string.IsNullOrEmpty(_steps[i].LoopGroupId))
+            {
+                var startStepIdx = -1;
+                for (int k = 0; k <= i; k++)
+                {
+                    if (_steps[k].LoopGroupId == _steps[i].LoopGroupId && _steps[k].IsLoopStart)
+                    {
+                        startStepIdx = k;
+                        break;
+                    }
+                }
+                if (startStepIdx >= 0 && startStepIdx < i && startStepIdx < rects.Count)
+                {
+                    var a = rects[i];
+                    var b = rects[startStepIdx];
+                    var loopStart = new Point(a.Right - a.Width / 2, a.Bottom);
+                    var loopEnd = new Point(b.Left + b.Width / 2, b.Bottom);
+                    var midY = Math.Max(a.Bottom, b.Bottom) + 28;
+                    e.Graphics.DrawBezier(loopConnectorPen, loopStart,
+                        new Point(loopStart.X, midY), new Point(loopEnd.X, midY), loopEnd);
+                    DrawArrow(e.Graphics, loopConnectorPen.Color, loopEnd);
+                }
+                else if (startStepIdx == i && startStepIdx < rects.Count)
+                {
+                    var a = rects[i];
+                    var loopStart = new Point(a.Right - 25, a.Bottom);
+                    var loopEnd = new Point(a.Left + 25, a.Bottom);
+                    var midY = a.Bottom + 24;
+                    e.Graphics.DrawBezier(loopConnectorPen, loopStart,
+                        new Point(loopStart.X, midY), new Point(loopEnd.X, midY), loopEnd);
+                    DrawArrow(e.Graphics, loopConnectorPen.Color, loopEnd);
+                }
+            }
+        }
+
         for (var i = 0; i < rects.Count; i++)
             DrawNode(e.Graphics, rects[i], _steps[i], i);
 
@@ -506,10 +545,14 @@ public sealed class WorkflowCanvas : ScrollableControl
         var selected = index == _selectedIndex || isMultiSelected;
         var running = index == _runningIndex;
         var hovered = index == _hoverIndex;
+        var inLoop = !string.IsNullOrEmpty(step.LoopGroupId);
+
         var fill = running
             ? (_lightTheme ? Color.FromArgb(225, 248, 239) : Color.FromArgb(25, 67, 60))
             : selected
             ? (_lightTheme ? Color.FromArgb(226, 243, 252) : Color.FromArgb(31, 51, 69))
+            : inLoop
+            ? (_lightTheme ? Color.FromArgb(250, 245, 255) : Color.FromArgb(32, 24, 46))
             : (_lightTheme ? Color.White : Color.FromArgb(22, 31, 46));
         if (hovered && !selected && !running) fill = _lightTheme ? Color.FromArgb(242, 249, 253) : Color.FromArgb(27, 42, 60);
 
@@ -519,8 +562,14 @@ public sealed class WorkflowCanvas : ScrollableControl
             ? Color.FromArgb(0, 174, 139)
             : selected
                 ? Color.FromArgb(120, accent)
+                : inLoop
+                ? Color.FromArgb(192, 132, 252)
                 : (_lightTheme ? Color.FromArgb(177, 209, 227) : Color.FromArgb(47, 73, 94));
-        using var borderPen = new Pen(borderColor, running || selected ? 1.8f : 1f);
+        using var borderPen = new Pen(borderColor, running || selected ? 1.8f : (inLoop ? 1.4f : 1f));
+        if (inLoop && !running && !selected)
+        {
+            borderPen.DashStyle = DashStyle.Dash;
+        }
         g.FillPath(fillBrush, path);
         g.DrawPath(borderPen, path);
 
@@ -545,6 +594,29 @@ public sealed class WorkflowCanvas : ScrollableControl
         using var textBrush = new SolidBrush(_lightTheme ? Color.FromArgb(91, 128, 157) : Color.FromArgb(139, 164, 188));
         g.DrawString($"{index + 1:00}  {WorkflowStep.GetTypeLabel(step.Type)}", stepFont, titleBrush, rect.Left + 45, rect.Top + 11);
         g.DrawString(GetSummary(step), textFont, textBrush, rect.Left + 45, rect.Top + 30);
+
+        // Vẽ huy hiệu (badge) vòng lặp ở góc trên bên phải nếu bước thuộc vòng lặp
+        if (inLoop)
+        {
+            string badgeText = (step.IsLoopStart && step.IsLoopEnd)
+                ? $"🔁 Lặp: {{{step.LoopVariable}}}"
+                : (step.IsLoopStart
+                    ? $"🔁 Lặp: {{{step.LoopVariable}}}"
+                    : (step.IsLoopEnd ? "🔁 Hết lặp" : "🔁"));
+
+            using var badgeFont = new Font("Segoe UI Semibold", 7f);
+            var badgeSize = g.MeasureString(badgeText, badgeFont);
+            var badgeRect = new Rectangle(rect.Right - (int)badgeSize.Width - 10, rect.Top - 8, (int)badgeSize.Width + 8, (int)badgeSize.Height + 2);
+
+            using var badgePath = RoundedRect(badgeRect, 4);
+            using var badgeFill = new SolidBrush(Color.FromArgb(243, 232, 255));
+            using var badgeBorder = new Pen(Color.FromArgb(216, 180, 254), 1f);
+            using var badgeTextBrush = new SolidBrush(Color.FromArgb(126, 34, 206));
+
+            g.FillPath(badgeFill, badgePath);
+            g.DrawPath(badgeBorder, badgePath);
+            g.DrawString(badgeText, badgeFont, badgeTextBrush, badgeRect.X + 4, badgeRect.Y + 1);
+        }
 
         using var pinBrush = new SolidBrush(Color.FromArgb(98, 113, 236));
         g.FillEllipse(pinBrush, rect.Left - 4, rect.Top + rect.Height / 2 - 4, 8, 8);

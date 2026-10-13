@@ -176,6 +176,24 @@ public class WorkflowStep
     /// <summary>Khi nhập link ({ShopeeAffLink}): true = lấy tất cả link; false = chỉ lấy duy nhất 1 link đầu tiên</summary>
     public bool TakeAllLinks { get; set; }
 
+    /// <summary>Định danh nhóm vòng lặp (Guid/chuỗi). Rỗng = không thuộc vòng lặp.</summary>
+    public string LoopGroupId { get; set; } = string.Empty;
+
+    /// <summary>Đánh dấu đây là bước bắt đầu của đoạn lặp</summary>
+    public bool IsLoopStart { get; set; }
+
+    /// <summary>Đánh dấu đây là bước kết thúc của đoạn lặp</summary>
+    public bool IsLoopEnd { get; set; }
+
+    /// <summary>Tên biến dùng để xác định số lần lặp (mặc định: "ShopeeAffLink")</summary>
+    public string LoopVariable { get; set; } = "ShopeeAffLink";
+
+    /// <summary>Giới hạn tối đa số lần lặp (0 = lặp hết danh sách link)</summary>
+    public int LoopMaxCount { get; set; } = 0;
+
+    /// <summary>Nếu danh sách link rỗng thì bỏ qua toàn bộ khối lặp (mặc định: true)</summary>
+    public bool LoopSkipIfEmpty { get; set; } = true;
+
     /// <summary>
     /// Vị trí node trên canvas. Giá trị âm nghĩa là canvas tự xếp layout.
     /// Được lưu cùng workflow để người dùng tự sắp xếp flow.

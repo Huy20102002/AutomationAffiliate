@@ -206,45 +206,162 @@ public sealed class IosWorkflowEngine
         {
             ct.ThrowIfCancellationRequested();
             var step = steps[i];
-            var isSkippedOpenApp = skipOpenApp && step.Type == StepType.OpenApp;
-            var stepInfo = $"[{i + 1}/{steps.Count}] {step.GetDisplayText()}";
-            if (isSkippedOpenApp)
-                stepInfo += " · bỏ qua từ job thứ 2";
-            progress?.Report(stepInfo);
-            Logger.Info($"[iOS] Job #{job.Id}: {stepInfo}");
-            if (isSkippedOpenApp)
-                continue;
 
-            onStepStarted?.Invoke(i);
-
-            const int maxRetries = 3;
-            for (int attempt = 1; attempt <= maxRetries; attempt++)
+            // ── Kiểm tra đoạn Loop Block ──
+            if (step.IsLoopStart && !string.IsNullOrEmpty(step.LoopGroupId))
             {
-                try
+                int loopEndIndex = -1;
+                for (int k = i; k < steps.Count; k++)
                 {
-                    await ExecuteStepAsync(step, job, deviceId, ct, variables);
-                    break;
+                    if (steps[k].LoopGroupId == step.LoopGroupId && steps[k].IsLoopEnd)
+                    {
+                        loopEndIndex = k;
+                        break;
+                    }
                 }
-                catch (Exception ex)
+                if (loopEndIndex < i)
                 {
-                    if (ex is FileNotFoundException || ex is InvalidDataException || (ex is InvalidOperationException && ex.Message.Contains("VideoPath")) || ex is OperationCanceledException)
+                    for (int k = steps.Count - 1; k >= i; k--)
                     {
-                        throw;
+                        if (steps[k].LoopGroupId == step.LoopGroupId)
+                        {
+                            loopEndIndex = k;
+                            break;
+                        }
                     }
-
-                    if (attempt == maxRetries)
-                    {
-                        throw;
-                    }
-
-                    progress?.Report($"[Lỗi] {ex.Message} - Thử lại ({attempt}/{maxRetries})...");
-                    Logger.Warn($"[iOS] Job #{job.Id}: Lỗi bước '{step.GetDisplayText()}': {ex.Message}. Đang thử lại lần {attempt}/{maxRetries}...");
-                    await Task.Delay(2000, ct);
                 }
+                if (loopEndIndex < i) loopEndIndex = i;
+
+                var loopItems = new List<string>();
+                if (string.Equals(step.LoopVariable, "ShopeeAffLink", StringComparison.OrdinalIgnoreCase) ||
+                    string.IsNullOrEmpty(step.LoopVariable))
+                {
+                    loopItems = job.GetShopeeAffLinks();
+                }
+                else
+                {
+                    var customVar = variables?.FirstOrDefault(v => string.Equals(v.Name, step.LoopVariable, StringComparison.OrdinalIgnoreCase));
+                    if (customVar != null && !string.IsNullOrWhiteSpace(customVar.Value))
+                    {
+                        loopItems = customVar.Value.Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+                    }
+                    else if (job.TryGetColumnValue(step.LoopVariable, out var colVal) && !string.IsNullOrWhiteSpace(colVal))
+                    {
+                        loopItems = colVal.Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+                    }
+                }
+
+                int effectiveCount = step.LoopMaxCount > 0 ? Math.Min(loopItems.Count, step.LoopMaxCount) : loopItems.Count;
+
+                if (effectiveCount == 0 && step.LoopSkipIfEmpty)
+                {
+                    var skipInfo = $"[iOS Vòng lặp] Không có {step.LoopVariable} -> Bỏ qua các bước {i + 1} đến {loopEndIndex + 1}";
+                    progress?.Report(skipInfo);
+                    Logger.Info($"[iOS] Job #{job.Id}: {skipInfo}");
+                    i = loopEndIndex;
+                    continue;
+                }
+
+                int totalIterations = Math.Max(effectiveCount, 1);
+                Logger.Info($"[iOS] Job #{job.Id}: Bắt đầu vòng lặp theo {step.LoopVariable} ({totalIterations} lần, các bước {i + 1} - {loopEndIndex + 1})");
+
+                for (int iter = 0; iter < totalIterations; iter++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var currentLoopVal = iter < loopItems.Count ? loopItems[iter] : "";
+
+                    for (int subIdx = i; subIdx <= loopEndIndex; subIdx++)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        await ExecuteStepWithRetryAsync(
+                            steps[subIdx],
+                            subIdx,
+                            steps.Count,
+                            job,
+                            deviceId,
+                            ct,
+                            progress,
+                            variables,
+                            onStepStarted,
+                            skipOpenApp,
+                            currentLoopVal,
+                            iter + 1,
+                            totalIterations);
+                    }
+                }
+
+                i = loopEndIndex;
+                continue;
             }
+
+            await ExecuteStepWithRetryAsync(
+                step,
+                i,
+                steps.Count,
+                job,
+                deviceId,
+                ct,
+                progress,
+                variables,
+                onStepStarted,
+                skipOpenApp);
         }
 
         return deviceId;
+    }
+
+    private async Task ExecuteStepWithRetryAsync(
+        WorkflowStep step,
+        int stepIndex,
+        int totalStepsCount,
+        JobItem job,
+        string deviceId,
+        CancellationToken ct,
+        IProgress<string>? progress,
+        IReadOnlyList<WorkflowVariable>? variables,
+        Action<int>? onStepStarted,
+        bool skipOpenApp,
+        string? currentLoopValue = null,
+        int loopIndex = 0,
+        int loopTotal = 0)
+    {
+        var isSkippedOpenApp = skipOpenApp && step.Type == StepType.OpenApp;
+        var loopPrefix = loopIndex > 0 ? $"[Lặp {loopIndex}/{loopTotal}] " : "";
+        var stepInfo = $"{loopPrefix}[{stepIndex + 1}/{totalStepsCount}] {step.GetDisplayText()}";
+        if (isSkippedOpenApp)
+            stepInfo += " · bỏ qua từ job thứ 2";
+        progress?.Report(stepInfo);
+        Logger.Info($"[iOS] Job #{job.Id}: {stepInfo}");
+        if (isSkippedOpenApp)
+            return;
+
+        onStepStarted?.Invoke(stepIndex);
+
+        const int maxRetries = 3;
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                await ExecuteStepAsync(step, job, deviceId, ct, variables, currentLoopValue, loopIndex, loopTotal);
+                break;
+            }
+            catch (Exception ex)
+            {
+                if (ex is FileNotFoundException || ex is InvalidDataException || (ex is InvalidOperationException && ex.Message.Contains("VideoPath")) || ex is OperationCanceledException)
+                {
+                    throw;
+                }
+
+                if (attempt == maxRetries)
+                {
+                    throw;
+                }
+
+                progress?.Report($"[Lỗi] {ex.Message} - Thử lại ({attempt}/{maxRetries})...");
+                Logger.Warn($"[iOS] Job #{job.Id}: Lỗi bước '{step.GetDisplayText()}': {ex.Message}. Đang thử lại lần {attempt}/{maxRetries}...");
+                await Task.Delay(2000, ct);
+            }
+        }
     }
 
     private async Task ExecuteStepAsync(
@@ -252,7 +369,10 @@ public sealed class IosWorkflowEngine
         JobItem job,
         string deviceId,
         CancellationToken ct,
-        IReadOnlyList<WorkflowVariable>? variables)
+        IReadOnlyList<WorkflowVariable>? variables,
+        string? currentLoopValue = null,
+        int loopIndex = 0,
+        int loopTotal = 0)
     {
         switch (step.Type)
         {
@@ -284,7 +404,7 @@ public sealed class IosWorkflowEngine
                 break;
 
             case StepType.InputText:
-                var inputText = ResolveInputText(step, job, variables);
+                var inputText = ResolveInputText(step, job, variables, currentLoopValue, loopIndex, loopTotal);
                 if (!step.TakeAllLinks && !string.IsNullOrWhiteSpace(inputText))
                 {
                     var lines = inputText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
@@ -430,7 +550,7 @@ public sealed class IosWorkflowEngine
                 break;
 
             case StepType.OpenApp:
-                await _iosManager.OpenAppAsync(deviceId, ResolveText(step.TextValue, job, variables), ct);
+                await _iosManager.OpenAppAsync(deviceId, ResolveText(step.TextValue, job, variables, false, currentLoopValue, loopIndex, loopTotal), ct);
                 break;
 
             case StepType.MediaScan:
@@ -576,7 +696,10 @@ public sealed class IosWorkflowEngine
         string template,
         JobItem job,
         IReadOnlyList<WorkflowVariable>? variables,
-        bool takeAllLinks = false)
+        bool takeAllLinks = false,
+        string? currentLoopValue = null,
+        int loopIndex = 0,
+        int loopTotal = 0)
     {
         if (string.IsNullOrEmpty(template)) return template;
 
@@ -585,8 +708,16 @@ public sealed class IosWorkflowEngine
         var primaryLink = links.Count > 0 ? links[0] : job.ShopeeAffLink;
         var chosenLink = takeAllLinks ? allLinksNewline : primaryLink;
 
+        if (!string.IsNullOrEmpty(currentLoopValue))
+        {
+            chosenLink = currentLoopValue;
+        }
+
         var result = template.Replace("{Title}", job.Title)
                              .Replace("{ShopeeAffLink}", chosenLink)
+                             .Replace("{CurrentAffLink}", chosenLink)
+                             .Replace("{LoopIndex}", loopIndex > 0 ? loopIndex.ToString() : "1")
+                             .Replace("{LoopTotal}", loopTotal > 0 ? loopTotal.ToString() : "1")
                              .Replace("{ShopeeAffLinks}", allLinksNewline)
                              .Replace("{ShopeeAffLink_All}", allLinksNewline)
                              .Replace("{ShopeeAffLink_First}", primaryLink)
@@ -615,14 +746,20 @@ public sealed class IosWorkflowEngine
         return result;
     }
 
-    private static string ResolveInputText(WorkflowStep step, JobItem job, IReadOnlyList<WorkflowVariable>? variables)
+    private static string ResolveInputText(
+        WorkflowStep step,
+        JobItem job,
+        IReadOnlyList<WorkflowVariable>? variables,
+        string? currentLoopValue = null,
+        int loopIndex = 0,
+        int loopTotal = 0)
     {
         var input = step.TextValue.Trim();
         var takeAll = step.TakeAllLinks;
         if (string.IsNullOrWhiteSpace(step.BindingColumn))
         {
             if (job.HasColumn(input)) return job.GetColumnValue(input, takeAll);
-            var resolved = ResolveText(step.TextValue, job, variables, takeAll);
+            var resolved = ResolveText(step.TextValue, job, variables, takeAll, currentLoopValue, loopIndex, loopTotal);
             return Regex.Replace(resolved, @"\{([^{}]+)\}", match =>
             {
                 var columnName = match.Groups[1].Value.Trim();
@@ -631,7 +768,7 @@ public sealed class IosWorkflowEngine
         }
         var columnValue = job.GetColumnValue(step.BindingColumn, takeAll);
         if (string.IsNullOrWhiteSpace(step.TextValue)) return columnValue;
-        return ResolveText(step.TextValue, job, variables, takeAll).Replace("{Value}", columnValue);
+        return ResolveText(step.TextValue, job, variables, takeAll, currentLoopValue, loopIndex, loopTotal).Replace("{Value}", columnValue);
     }
 
     private async Task RestartAppOnFailureAsync(

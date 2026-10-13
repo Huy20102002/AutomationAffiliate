@@ -93,7 +93,7 @@ public class JobItem
         return list;
     }
 
-    private bool TryGetColumnValue(string columnName, out string value, bool takeAllLinks = true)
+    public bool TryGetColumnValue(string columnName, out string value, bool takeAllLinks = true)
     {
         value = string.Empty;
         if (string.IsNullOrWhiteSpace(columnName)) return false;

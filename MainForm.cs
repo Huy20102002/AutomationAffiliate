@@ -994,6 +994,12 @@ public partial class MainForm : Form
         var selectedIndices = workflowCanvas.SelectedIndices;
         var hasMultiSelection = selectedIndices.Count > 1 && selectedIndices.Contains(index);
 
+        var selectedList = hasMultiSelection
+            ? selectedIndices.Where(i => i >= 0 && i < _workflowSteps.Count).OrderBy(i => i).ToList()
+            : new List<int> { index };
+
+        var selectedInLoop = selectedList.Any(i => !string.IsNullOrEmpty(_workflowSteps[i].LoopGroupId));
+
         if (hasMultiSelection)
         {
             var tapCount = selectedIndices.Count(i => i >= 0 && i < _workflowSteps.Count && 
@@ -1001,7 +1007,45 @@ public partial class MainForm : Form
 
             var groupItem = menu.Items.Add($"🎲 Gom {selectedIndices.Count} bước thành Chạm ngẫu nhiên ({tapCount} tọa độ)", null, (_, _) => GroupSelectedStepsToRandomTap());
             groupItem.Font = new Font(menu.Font, FontStyle.Bold);
+
+            if (selectedInLoop)
+            {
+                var editLoopItem = menu.Items.Add($"⚙️ Sửa cấu hình vòng lặp đoạn này...", null, (_, _) => ConfigureLoopForSelectedSteps(selectedList));
+                editLoopItem.Font = new Font(menu.Font, FontStyle.Bold);
+                editLoopItem.ForeColor = Color.FromArgb(147, 51, 234);
+
+                var removeLoopItem = menu.Items.Add($"❌ Hủy vòng lặp đoạn này", null, (_, _) => RemoveLoopForSelectedSteps(selectedList));
+                removeLoopItem.ForeColor = Color.FromArgb(220, 38, 38);
+            }
+            else
+            {
+                var loopItem = menu.Items.Add($"🔁 Tạo vòng lặp theo biến ({selectedList.First() + 1} ➔ {selectedList.Last() + 1})...", null, (_, _) => ConfigureLoopForSelectedSteps(selectedList));
+                loopItem.Font = new Font(menu.Font, FontStyle.Bold);
+                loopItem.ForeColor = Color.FromArgb(147, 51, 234);
+            }
+
             menu.Items.Add(new ToolStripSeparator());
+        }
+        else
+        {
+            var singleStep = _workflowSteps[index];
+            if (!string.IsNullOrEmpty(singleStep.LoopGroupId))
+            {
+                var editLoopItem = menu.Items.Add($"⚙️ Sửa cấu hình vòng lặp này...", null, (_, _) => ConfigureLoopForStepGroup(singleStep.LoopGroupId));
+                editLoopItem.Font = new Font(menu.Font, FontStyle.Bold);
+                editLoopItem.ForeColor = Color.FromArgb(147, 51, 234);
+
+                var removeLoopItem = menu.Items.Add($"❌ Hủy vòng lặp này", null, (_, _) => RemoveLoopForStepGroup(singleStep.LoopGroupId));
+                removeLoopItem.ForeColor = Color.FromArgb(220, 38, 38);
+
+                menu.Items.Add(new ToolStripSeparator());
+            }
+            else
+            {
+                var loopItem = menu.Items.Add($"🔁 Tạo vòng lặp cho bước này...", null, (_, _) => ConfigureLoopForSelectedSteps(new List<int> { index }));
+                loopItem.ForeColor = Color.FromArgb(147, 51, 234);
+                menu.Items.Add(new ToolStripSeparator());
+            }
         }
 
         var runFromHereItem = new ToolStripMenuItem($"▶ Chạy từ bước này đến hết (Bước {index + 1} ➔ {_workflowSteps.Count})...", null, async (_, _) => await StartTestWorkflowFromStepAsync(index));
@@ -1029,6 +1073,129 @@ public partial class MainForm : Form
         }
 
         menu.Show(workflowCanvas, workflowCanvas.PointToClient(Cursor.Position));
+    }
+
+    private void ConfigureLoopForSelectedSteps(IReadOnlyList<int> rawIndices)
+    {
+        if (rawIndices == null || rawIndices.Count == 0) return;
+
+        var validIndices = rawIndices
+            .Where(i => i >= 0 && i < _workflowSteps.Count)
+            .OrderBy(i => i)
+            .ToList();
+
+        if (validIndices.Count == 0) return;
+
+        int minIdx = validIndices.Min();
+        int maxIdx = validIndices.Max();
+
+        var startStep = _workflowSteps[minIdx];
+        var isEditing = !string.IsNullOrEmpty(startStep.LoopGroupId);
+        var currentVar = !string.IsNullOrEmpty(startStep.LoopVariable) ? startStep.LoopVariable : "ShopeeAffLink";
+        var currentMax = startStep.LoopMaxCount;
+        var currentSkip = startStep.LoopSkipIfEmpty;
+
+        using var dlg = new Controls.WorkflowLoopConfigDialog(
+            minIdx + 1,
+            maxIdx + 1,
+            maxIdx - minIdx + 1,
+            currentVar,
+            currentMax,
+            currentSkip,
+            isEditing);
+
+        if (dlg.ShowDialog(this) == DialogResult.OK)
+        {
+            var groupId = isEditing && !string.IsNullOrEmpty(startStep.LoopGroupId)
+                ? startStep.LoopGroupId
+                : Guid.NewGuid().ToString("N")[..8];
+
+            for (int i = minIdx; i <= maxIdx; i++)
+            {
+                var s = _workflowSteps[i];
+                s.LoopGroupId = groupId;
+                s.LoopVariable = dlg.LoopVariable;
+                s.LoopMaxCount = dlg.LoopMaxCount;
+                s.LoopSkipIfEmpty = dlg.LoopSkipIfEmpty;
+                s.IsLoopStart = (i == minIdx);
+                s.IsLoopEnd = (i == maxIdx);
+            }
+
+            workflowCanvas.ClearMultiSelection();
+            RefreshWorkflow();
+            SaveAutoSavedWorkflow();
+            SetStatus($"Đã gán vòng lặp theo '{dlg.LoopVariable}' cho bước #{minIdx + 1} ➔ #{maxIdx + 1}");
+        }
+    }
+
+    private void ConfigureLoopForStepGroup(string groupId)
+    {
+        if (string.IsNullOrEmpty(groupId)) return;
+        var indices = new List<int>();
+        for (int i = 0; i < _workflowSteps.Count; i++)
+        {
+            if (_workflowSteps[i].LoopGroupId == groupId)
+                indices.Add(i);
+        }
+        if (indices.Count > 0)
+        {
+            ConfigureLoopForSelectedSteps(indices);
+        }
+    }
+
+    private void RemoveLoopForSelectedSteps(IReadOnlyList<int> rawIndices)
+    {
+        if (rawIndices == null || rawIndices.Count == 0) return;
+
+        var groupIds = rawIndices
+            .Where(i => i >= 0 && i < _workflowSteps.Count)
+            .Select(i => _workflowSteps[i].LoopGroupId)
+            .Where(g => !string.IsNullOrEmpty(g))
+            .Distinct()
+            .ToList();
+
+        if (groupIds.Count == 0) return;
+
+        foreach (var step in _workflowSteps)
+        {
+            if (groupIds.Contains(step.LoopGroupId))
+            {
+                step.LoopGroupId = string.Empty;
+                step.IsLoopStart = false;
+                step.IsLoopEnd = false;
+                step.LoopVariable = "ShopeeAffLink";
+                step.LoopMaxCount = 0;
+                step.LoopSkipIfEmpty = true;
+            }
+        }
+
+        workflowCanvas.ClearMultiSelection();
+        RefreshWorkflow();
+        SaveAutoSavedWorkflow();
+        SetStatus("Đã hủy cấu hình vòng lặp.");
+    }
+
+    private void RemoveLoopForStepGroup(string groupId)
+    {
+        if (string.IsNullOrEmpty(groupId)) return;
+
+        foreach (var step in _workflowSteps)
+        {
+            if (step.LoopGroupId == groupId)
+            {
+                step.LoopGroupId = string.Empty;
+                step.IsLoopStart = false;
+                step.IsLoopEnd = false;
+                step.LoopVariable = "ShopeeAffLink";
+                step.LoopMaxCount = 0;
+                step.LoopSkipIfEmpty = true;
+            }
+        }
+
+        workflowCanvas.ClearMultiSelection();
+        RefreshWorkflow();
+        SaveAutoSavedWorkflow();
+        SetStatus("Đã hủy cấu hình vòng lặp.");
     }
 
     private void GroupSelectedStepsToRandomTap()
@@ -1240,8 +1407,28 @@ public partial class MainForm : Form
         LoadStepConfig(-1);
     }
 
+    private void ValidateAndNormalizeLoopGroups()
+    {
+        var groups = _workflowSteps
+            .Where(s => !string.IsNullOrEmpty(s.LoopGroupId))
+            .GroupBy(s => s.LoopGroupId)
+            .ToList();
+
+        foreach (var group in groups)
+        {
+            var stepList = group.ToList();
+            for (int i = 0; i < stepList.Count; i++)
+            {
+                var s = stepList[i];
+                s.IsLoopStart = (i == 0);
+                s.IsLoopEnd = (i == stepList.Count - 1);
+            }
+        }
+    }
+
     private void RefreshWorkflow()
     {
+        ValidateAndNormalizeLoopGroups();
         workflowCanvas.SetSteps(_workflowSteps);
         lblStepCount.Text = $"{_workflowSteps.Count} BƯỚC";
     }
@@ -1258,7 +1445,10 @@ public partial class MainForm : Form
             return;
         }
         var step = _workflowSteps[index];
-        lblSelectedStep.Text = $"BƯỚC {index + 1:00}  ·  {WorkflowStep.GetTypeLabel(step.Type)}";
+        var loopText = !string.IsNullOrEmpty(step.LoopGroupId)
+            ? $"  [🔁 Lặp: {{{step.LoopVariable}}}]"
+            : string.Empty;
+        lblSelectedStep.Text = $"BƯỚC {index + 1:00}  ·  {WorkflowStep.GetTypeLabel(step.Type)}{loopText}";
         txtX.Text = step.X.ToString();
         txtY.Text = step.Y.ToString();
         txtTapXPath.Text = step.TapXPath;
