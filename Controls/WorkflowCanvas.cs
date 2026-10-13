@@ -38,6 +38,7 @@ public sealed class WorkflowCanvas : ScrollableControl
     public event EventHandler<(StepType Type, Point Location)>? StepDropRequested;
     public event EventHandler<float>? ZoomChanged;
     public event EventHandler<IReadOnlySet<int>>? MultiSelectionChanged;
+    public event EventHandler<Point>? CanvasContextRequested;
 
     public int SelectedIndex => _selectedIndex;
     public IReadOnlySet<int> SelectedIndices => _selectedIndices;
@@ -398,6 +399,10 @@ public sealed class WorkflowCanvas : ScrollableControl
                 StepSelected?.Invoke(this, hit);
                 StepContextRequested?.Invoke(this, hit);
                 Invalidate();
+            }
+            else
+            {
+                CanvasContextRequested?.Invoke(this, e.Location);
             }
             return;
         }

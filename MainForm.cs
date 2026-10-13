@@ -353,6 +353,7 @@ public partial class MainForm : Form
         };
         workflowCanvas.StepEditRequested += (_, index) => LoadStepConfig(index);
         workflowCanvas.StepContextRequested += (_, index) => ShowStepContextMenu(index);
+        workflowCanvas.CanvasContextRequested += (_, pt) => ShowCanvasContextMenu(pt);
         workflowCanvas.StepReorderRequested += (_, order) =>
         {
             if (order.From < 0 || order.From >= _workflowSteps.Count || order.To < 0 || order.To >= _workflowSteps.Count) return;
@@ -1010,9 +1011,17 @@ public partial class MainForm : Form
 
             if (selectedInLoop)
             {
+                int loopStart = selectedList.First();
+                int loopEnd = selectedList.Last();
+
+                var testLoopItem = new ToolStripMenuItem($"🔁 Chạy thử riêng vòng lặp này (Bước {loopStart + 1} ➔ {loopEnd + 1})...", null, async (_, _) => await StartTestWorkflowLoopAsync(loopStart, loopEnd));
+                testLoopItem.Font = new Font(menu.Font, FontStyle.Bold);
+                testLoopItem.ForeColor = Color.FromArgb(147, 51, 234);
+                menu.Items.Add(testLoopItem);
+
                 var editLoopItem = menu.Items.Add($"⚙️ Sửa cấu hình vòng lặp đoạn này...", null, (_, _) => ConfigureLoopForSelectedSteps(selectedList));
                 editLoopItem.Font = new Font(menu.Font, FontStyle.Bold);
-                editLoopItem.ForeColor = Color.FromArgb(147, 51, 234);
+                editLoopItem.ForeColor = Color.FromArgb(109, 40, 217);
 
                 var removeLoopItem = menu.Items.Add($"❌ Hủy vòng lặp đoạn này", null, (_, _) => RemoveLoopForSelectedSteps(selectedList));
                 removeLoopItem.ForeColor = Color.FromArgb(220, 38, 38);
@@ -1031,9 +1040,18 @@ public partial class MainForm : Form
             var singleStep = _workflowSteps[index];
             if (!string.IsNullOrEmpty(singleStep.LoopGroupId))
             {
+                var groupSteps = _workflowSteps.Where(s => s.LoopGroupId == singleStep.LoopGroupId).ToList();
+                int firstIdx = groupSteps.Count > 0 ? _workflowSteps.IndexOf(groupSteps.First()) : index;
+                int lastIdx = groupSteps.Count > 0 ? _workflowSteps.IndexOf(groupSteps.Last()) : index;
+
+                var testLoopItem = new ToolStripMenuItem($"🔁 Chạy thử riêng vòng lặp này (Bước {firstIdx + 1} ➔ {lastIdx + 1})...", null, async (_, _) => await StartTestWorkflowLoopAsync(firstIdx, lastIdx));
+                testLoopItem.Font = new Font(menu.Font, FontStyle.Bold);
+                testLoopItem.ForeColor = Color.FromArgb(147, 51, 234);
+                menu.Items.Add(testLoopItem);
+
                 var editLoopItem = menu.Items.Add($"⚙️ Sửa cấu hình vòng lặp này...", null, (_, _) => ConfigureLoopForStepGroup(singleStep.LoopGroupId));
                 editLoopItem.Font = new Font(menu.Font, FontStyle.Bold);
-                editLoopItem.ForeColor = Color.FromArgb(147, 51, 234);
+                editLoopItem.ForeColor = Color.FromArgb(109, 40, 217);
 
                 var removeLoopItem = menu.Items.Add($"❌ Hủy vòng lặp này", null, (_, _) => RemoveLoopForStepGroup(singleStep.LoopGroupId));
                 removeLoopItem.ForeColor = Color.FromArgb(220, 38, 38);
@@ -1075,6 +1093,99 @@ public partial class MainForm : Form
         menu.Show(workflowCanvas, workflowCanvas.PointToClient(Cursor.Position));
     }
 
+    private void ShowCanvasContextMenu(Point location)
+    {
+        var menu = new ContextMenuStrip();
+
+        var loopItem = new ToolStripMenuItem("🔁 Cấu hình vòng lặp theo khoảng bước (Từ bước ... đến bước ...)...", null, (_, _) =>
+        {
+            OpenLoopConfigDialogForRange();
+        });
+        loopItem.Font = new Font(menu.Font, FontStyle.Bold);
+        loopItem.ForeColor = Color.FromArgb(147, 51, 234);
+        menu.Items.Add(loopItem);
+
+        var existingLoopGroups = _workflowSteps
+            .Where(s => !string.IsNullOrEmpty(s.LoopGroupId))
+            .GroupBy(s => s.LoopGroupId)
+            .ToList();
+
+        if (existingLoopGroups.Count > 0)
+        {
+            var loopsSubMenu = new ToolStripMenuItem("⚙️ Các vòng lặp hiện có trong quy trình");
+            loopsSubMenu.ForeColor = Color.FromArgb(109, 40, 217);
+            foreach (var grp in existingLoopGroups)
+            {
+                var stepList = grp.ToList();
+                var firstIdx = _workflowSteps.IndexOf(stepList.First());
+                var lastIdx = _workflowSteps.IndexOf(stepList.Last());
+                var loopVar = stepList.First().LoopVariable;
+                var gId = grp.Key;
+
+                var grpSub = new ToolStripMenuItem($"🔁 Vòng lặp: Bước {firstIdx + 1} ➔ {lastIdx + 1} ({{{loopVar}}})");
+                grpSub.DropDownItems.Add("▶ Chạy thử vòng lặp này...", null, async (_, _) => await StartTestWorkflowLoopAsync(firstIdx, lastIdx));
+                grpSub.DropDownItems.Add("⚙️ Sửa cấu hình...", null, (_, _) => ConfigureLoopForStepGroup(gId));
+                grpSub.DropDownItems.Add("❌ Hủy vòng lặp này", null, (_, _) => RemoveLoopForStepGroup(gId));
+
+                loopsSubMenu.DropDownItems.Add(grpSub);
+            }
+            menu.Items.Add(loopsSubMenu);
+        }
+
+        menu.Items.Add(new ToolStripSeparator());
+
+        menu.Items.Add("➕ Thêm bước Chạm (Tap)", null, (_, _) => AddStep(StepType.Tap));
+        menu.Items.Add("➕ Thêm bước Chờ (Delay)", null, (_, _) => AddStep(StepType.Delay));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("📐 Đặt lại góc nhìn (100%)", null, (_, _) => workflowCanvas.ResetZoom());
+
+        menu.Show(workflowCanvas, location);
+    }
+
+    private void OpenLoopConfigDialogForRange(int? defaultStart = null, int? defaultEnd = null)
+    {
+        if (_workflowSteps.Count == 0)
+        {
+            ShowError("Quy trình hiện chưa có bước nào để tạo vòng lặp.");
+            return;
+        }
+
+        var selected = workflowCanvas.SelectedIndices
+            .Where(i => i >= 0 && i < _workflowSteps.Count)
+            .OrderBy(i => i)
+            .ToList();
+
+        int startStep = defaultStart ?? (selected.Count > 0 ? selected.First() + 1 : 1);
+        int endStep = defaultEnd ?? (selected.Count > 0 ? selected.Last() + 1 : Math.Min(startStep + 4, _workflowSteps.Count));
+
+        startStep = Math.Clamp(startStep, 1, _workflowSteps.Count);
+        endStep = Math.Clamp(endStep, 1, _workflowSteps.Count);
+
+        var firstStepObj = _workflowSteps[startStep - 1];
+        var isEditing = !string.IsNullOrEmpty(firstStepObj.LoopGroupId);
+        var currentVar = !string.IsNullOrEmpty(firstStepObj.LoopVariable) ? firstStepObj.LoopVariable : "ShopeeAffLink";
+        var currentMax = firstStepObj.LoopMaxCount;
+        var currentSkip = firstStepObj.LoopSkipIfEmpty;
+
+        using var dlg = new Controls.WorkflowLoopConfigDialog(
+            startStep,
+            endStep,
+            _workflowSteps.Count,
+            currentVar,
+            currentMax,
+            currentSkip,
+            isEditing);
+
+        if (dlg.ShowDialog(this) == DialogResult.OK)
+        {
+            ApplyLoopConfiguration(dlg.StartStepNumber - 1, dlg.EndStepNumber - 1, dlg.LoopVariable, dlg.LoopMaxCount, dlg.LoopSkipIfEmpty);
+            if (dlg.RequestTestRunImmediately)
+            {
+                _ = StartTestWorkflowLoopAsync(dlg.StartStepNumber - 1, dlg.EndStepNumber - 1);
+            }
+        }
+    }
+
     private void ConfigureLoopForSelectedSteps(IReadOnlyList<int> rawIndices)
     {
         if (rawIndices == null || rawIndices.Count == 0) return;
@@ -1086,45 +1197,200 @@ public partial class MainForm : Form
 
         if (validIndices.Count == 0) return;
 
-        int minIdx = validIndices.Min();
-        int maxIdx = validIndices.Max();
+        OpenLoopConfigDialogForRange(validIndices.Min() + 1, validIndices.Max() + 1);
+    }
 
-        var startStep = _workflowSteps[minIdx];
-        var isEditing = !string.IsNullOrEmpty(startStep.LoopGroupId);
-        var currentVar = !string.IsNullOrEmpty(startStep.LoopVariable) ? startStep.LoopVariable : "ShopeeAffLink";
-        var currentMax = startStep.LoopMaxCount;
-        var currentSkip = startStep.LoopSkipIfEmpty;
+    private void ApplyLoopConfiguration(int minIdx, int maxIdx, string loopVariable, int maxCount, bool skipIfEmpty)
+    {
+        if (_workflowSteps.Count == 0) return;
+        minIdx = Math.Clamp(minIdx, 0, _workflowSteps.Count - 1);
+        maxIdx = Math.Clamp(maxIdx, 0, _workflowSteps.Count - 1);
+        if (minIdx > maxIdx) (minIdx, maxIdx) = (maxIdx, minIdx);
 
-        using var dlg = new Controls.WorkflowLoopConfigDialog(
-            minIdx + 1,
-            maxIdx + 1,
-            maxIdx - minIdx + 1,
-            currentVar,
-            currentMax,
-            currentSkip,
-            isEditing);
+        var existingGroup = _workflowSteps
+            .Skip(minIdx)
+            .Take(maxIdx - minIdx + 1)
+            .Select(s => s.LoopGroupId)
+            .FirstOrDefault(g => !string.IsNullOrEmpty(g));
 
-        if (dlg.ShowDialog(this) == DialogResult.OK)
+        var groupId = !string.IsNullOrEmpty(existingGroup) ? existingGroup : Guid.NewGuid().ToString("N")[..8];
+
+        // Clear existing group markings from any steps outside this range that had the same groupId
+        foreach (var s in _workflowSteps)
         {
-            var groupId = isEditing && !string.IsNullOrEmpty(startStep.LoopGroupId)
-                ? startStep.LoopGroupId
-                : Guid.NewGuid().ToString("N")[..8];
-
-            for (int i = minIdx; i <= maxIdx; i++)
+            if (s.LoopGroupId == groupId)
             {
-                var s = _workflowSteps[i];
-                s.LoopGroupId = groupId;
-                s.LoopVariable = dlg.LoopVariable;
-                s.LoopMaxCount = dlg.LoopMaxCount;
-                s.LoopSkipIfEmpty = dlg.LoopSkipIfEmpty;
-                s.IsLoopStart = (i == minIdx);
-                s.IsLoopEnd = (i == maxIdx);
+                s.LoopGroupId = string.Empty;
+                s.IsLoopStart = false;
+                s.IsLoopEnd = false;
+            }
+        }
+
+        for (int i = minIdx; i <= maxIdx; i++)
+        {
+            var s = _workflowSteps[i];
+            s.LoopGroupId = groupId;
+            s.LoopVariable = loopVariable;
+            s.LoopMaxCount = maxCount;
+            s.LoopSkipIfEmpty = skipIfEmpty;
+            s.IsLoopStart = (i == minIdx);
+            s.IsLoopEnd = (i == maxIdx);
+        }
+
+        workflowCanvas.ClearMultiSelection();
+        RefreshWorkflow();
+        SaveAutoSavedWorkflow();
+        SetStatus($"Đã gán vòng lặp theo '{loopVariable}' cho bước #{minIdx + 1} ➔ #{maxIdx + 1}");
+    }
+
+    private async Task StartTestWorkflowLoopAsync(int startIdx, int endIdx)
+    {
+        if (!_isIosMode && _currentDevice == null)
+        {
+            ShowError("Chưa kết nối thiết bị. Vui lòng kết nối thiết bị trước khi chạy thử vòng lặp.");
+            return;
+        }
+        if (_workflowSteps.Count == 0 || startIdx < 0 || endIdx >= _workflowSteps.Count || startIdx > endIdx)
+        {
+            ShowError("Khoảng bước vòng lặp không hợp lệ hoặc Quy trình đang trống.");
+            return;
+        }
+        if (_cts != null)
+        {
+            ShowError("Đang có tiến trình khác đang thực thi. Vui lòng dừng tiến trình trước khi chạy thử.");
+            return;
+        }
+
+        var loopStepsRaw = _workflowSteps.Skip(startIdx).Take(endIdx - startIdx + 1).ToList();
+        if (loopStepsRaw.Count == 0) return;
+
+        // Clone steps and configure as an explicit loop unit
+        var loopSteps = JsonConvert.DeserializeObject<List<WorkflowStep>>(JsonConvert.SerializeObject(loopStepsRaw)) ?? new List<WorkflowStep>();
+        var loopVar = !string.IsNullOrEmpty(_workflowSteps[startIdx].LoopVariable) ? _workflowSteps[startIdx].LoopVariable : "ShopeeAffLink";
+        var loopMax = _workflowSteps[startIdx].LoopMaxCount;
+        var loopGroupId = !string.IsNullOrEmpty(_workflowSteps[startIdx].LoopGroupId) ? _workflowSteps[startIdx].LoopGroupId : "test_loop";
+
+        for (int k = 0; k < loopSteps.Count; k++)
+        {
+            loopSteps[k].LoopGroupId = loopGroupId;
+            loopSteps[k].LoopVariable = loopVar;
+            loopSteps[k].LoopMaxCount = loopMax;
+            loopSteps[k].LoopSkipIfEmpty = false;
+            loopSteps[k].IsLoopStart = (k == 0);
+            loopSteps[k].IsLoopEnd = (k == loopSteps.Count - 1);
+        }
+
+        var candidateJobs = productListControl.GetFilteredJobs().ToList();
+        if (candidateJobs.Count == 0)
+        {
+            candidateJobs = _jobs.ToList();
+        }
+
+        // Ưu tiên chọn video có link affiliate để test vòng lặp
+        JobItem? preselectedJob = candidateJobs.FirstOrDefault(j => j.GetShopeeAffLinks().Count > 1)
+            ?? candidateJobs.FirstOrDefault(j => j.GetShopeeAffLinks().Count > 0);
+
+        int selectedProductIndex = productListControl.SelectedIndex;
+        if (selectedProductIndex >= 0 && selectedProductIndex < _jobs.Count)
+        {
+            preselectedJob = _jobs[selectedProductIndex];
+        }
+
+        string defaultPlatform = "Shopee";
+        JobItem testJob;
+        string targetPlatform;
+
+        using (var dialog = new Controls.SelectTestJobDialog(
+            startIdx,
+            _workflowSteps[startIdx],
+            loopSteps.Count,
+            false,
+            candidateJobs,
+            preselectedJob,
+            job => productListControl.GetJobDisplayStt(job),
+            defaultPlatform,
+            customTitle: $"🔁 Chạy thử vòng lặp: Bước #{startIdx + 1} ➔ #{endIdx + 1} ({loopSteps.Count} bước)",
+            customSubtitle: $"Chọn 1 video mẫu để test vòng lặp theo biến '{loopVar}'. Hệ thống sẽ lặp qua các link của video này."))
+        {
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+                return;
+
+            testJob = dialog.SelectedJob ?? candidateJobs.FirstOrDefault() ?? new JobItem { Id = 0, Title = "Chạy thử vòng lặp" };
+            targetPlatform = dialog.SelectedPlatform;
+        }
+
+        _cts = new CancellationTokenSource();
+        var token = _cts.Token;
+
+        btnStart.Enabled = false;
+        btnTestWorkflow.Enabled = false;
+        btnStop.Enabled = true;
+        progressBar.Maximum = Math.Max(1, loopSteps.Count);
+        progressBar.Value = 0;
+
+        string modeLabel = $"Vòng lặp Bước #{startIdx + 1} ➔ #{endIdx + 1}";
+        SetStatus($"Đang chạy thử {modeLabel}...");
+        Logger.Info($"Bắt đầu chạy thử {modeLabel} ({loopSteps.Count} bước) với video mẫu #{testJob.Id} ({testJob.Title}) trên {targetPlatform}.");
+        workflowCanvas.ClearRunningStep();
+
+        try
+        {
+            var progress = new Progress<string>(message =>
+            {
+                SetStatus($"Test Vòng lặp: {message}");
+                progressBar.Value = Math.Min(progressBar.Maximum, progressBar.Value + 1);
+                Logger.Info($"[TEST LOOP] {message}");
+            });
+
+            if (_isIosMode)
+            {
+                _iosEngine = new IosWorkflowEngine(_iosManager);
+                var result = await _iosEngine.ExecuteWorkflowAsync(
+                    loopSteps,
+                    testJob,
+                    _currentIosDeviceId,
+                    token,
+                    progress,
+                    _variables,
+                    stepOffset => SetRunningStepFromWorker(startIdx + stepOffset),
+                    targetPlatform);
+            }
+            else
+            {
+                _engine = new WorkflowEngine(_adb, SendTextThroughAdbAsync);
+                var result = await _engine.ExecuteWorkflowAsync(
+                    loopSteps,
+                    testJob,
+                    _currentDevice!,
+                    token,
+                    progress,
+                    _variables,
+                    stepOffset => SetRunningStepFromWorker(startIdx + stepOffset),
+                    targetPlatform);
             }
 
-            workflowCanvas.ClearMultiSelection();
-            RefreshWorkflow();
-            SaveAutoSavedWorkflow();
-            SetStatus($"Đã gán vòng lặp theo '{dlg.LoopVariable}' cho bước #{minIdx + 1} ➔ #{maxIdx + 1}");
+            SetStatus($"Đã hoàn tất chạy thử {modeLabel}!");
+            Logger.Info($"Đã hoàn tất chạy thử {modeLabel}.");
+        }
+        catch (OperationCanceledException)
+        {
+            SetStatus("Đã dừng chạy thử vòng lặp");
+            Logger.Info("Người dùng đã dừng chạy thử vòng lặp.");
+        }
+        catch (Exception ex)
+        {
+            SetStatus("Chạy thử vòng lặp thất bại");
+            Logger.Error($"Lỗi chạy thử {modeLabel}", ex);
+            ShowError($"Chạy thử vòng lặp thất bại: {ex.Message}");
+        }
+        finally
+        {
+            workflowCanvas.ClearRunningStep();
+            btnStart.Enabled = true;
+            btnTestWorkflow.Enabled = true;
+            btnStop.Enabled = false;
+            _cts?.Dispose();
+            _cts = null;
         }
     }
 

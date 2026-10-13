@@ -34,7 +34,9 @@ public sealed class SelectTestJobDialog : Form
         IReadOnlyList<JobItem> candidateJobs,
         JobItem? preselectedJob,
         Func<JobItem, int> getDisplayStt,
-        string defaultPlatform = "Shopee")
+        string defaultPlatform = "Shopee",
+        string? customTitle = null,
+        string? customSubtitle = null)
     {
         _getDisplayStt = getDisplayStt;
 
@@ -56,9 +58,11 @@ public sealed class SelectTestJobDialog : Form
             ];
         }
 
-        Text = runOnlyThisStep
-            ? $"⚡ Chạy thử riêng Bước #{startIndex + 1}"
-            : $"▶ Chạy thử từ Bước #{startIndex + 1} đến hết";
+        Text = !string.IsNullOrEmpty(customTitle)
+            ? customTitle
+            : (runOnlyThisStep
+                ? $"⚡ Chạy thử riêng Bước #{startIndex + 1}"
+                : $"▶ Chạy thử từ Bước #{startIndex + 1} đến hết");
         ClientSize = new Size(820, 540);
         MinimumSize = new Size(720, 460);
         StartPosition = FormStartPosition.CenterParent;
@@ -80,9 +84,11 @@ public sealed class SelectTestJobDialog : Form
 
         var lblTitle = new Label
         {
-            Text = runOnlyThisStep
-                ? $"⚡ Chạy thử riêng Bước #{startIndex + 1}: {step.GetDisplayText()}"
-                : $"▶ Chạy thử từ Bước #{startIndex + 1} đến hết ({stepsCount} bước)",
+            Text = !string.IsNullOrEmpty(customTitle)
+                ? customTitle
+                : (runOnlyThisStep
+                    ? $"⚡ Chạy thử riêng Bước #{startIndex + 1}: {step.GetDisplayText()}"
+                    : $"▶ Chạy thử từ Bước #{startIndex + 1} đến hết ({stepsCount} bước)"),
             Font = new Font("Segoe UI Semibold", 11F),
             ForeColor = Color.FromArgb(31, 31, 44),
             AutoSize = true,
@@ -91,7 +97,9 @@ public sealed class SelectTestJobDialog : Form
 
         var lblDesc = new Label
         {
-            Text = "Chọn 1 video mẫu từ danh sách dưới đây để truyền dữ liệu {Title}, {ShopeeAffLink}, {VideoPath}... cho bước thực thi.",
+            Text = !string.IsNullOrEmpty(customSubtitle)
+                ? customSubtitle
+                : "Chọn 1 video mẫu từ danh sách dưới đây để truyền dữ liệu {Title}, {ShopeeAffLink}, {VideoPath}... cho bước thực thi.",
             Font = new Font("Segoe UI", 8.5F),
             ForeColor = Color.FromArgb(107, 114, 128),
             AutoSize = true,
