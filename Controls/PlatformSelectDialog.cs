@@ -630,6 +630,17 @@ public sealed class PlatformSelectDialog : Form
 
     private void SaveAndExit()
     {
+        if (IsMultiWorkflow)
+        {
+            var wf1 = _cboWf1.SelectedItem as string;
+            var wf2 = _cboWf2.SelectedItem as string;
+            if (string.IsNullOrWhiteSpace(wf1) || string.IsNullOrWhiteSpace(wf2))
+            {
+                MessageBox.Show(this, "Vui lòng chọn đầy đủ cả 2 file quy trình cho Quy trình 1 và Quy trình 2.", "Thiếu quy trình", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+        }
+
         UseAiTitle = _chkUseAi.Checked;
         DelayMinMinutes = (int)_numMin.Value;
         DelayMaxMinutes = (int)_numMax.Value;

@@ -349,13 +349,15 @@ public partial class MainForm : Form
         productListControl.RestoreDbRequested += (_, _) => RestoreDatabase();
         workflowCanvas.StepSelected += (_, index) =>
         {
+            if (_cts != null) return;
             LoadStepConfig(index);
         };
-        workflowCanvas.StepEditRequested += (_, index) => LoadStepConfig(index);
-        workflowCanvas.StepContextRequested += (_, index) => ShowStepContextMenu(index);
-        workflowCanvas.CanvasContextRequested += (_, pt) => ShowCanvasContextMenu(pt);
+        workflowCanvas.StepEditRequested += (_, index) => { if (_cts != null) return; LoadStepConfig(index); };
+        workflowCanvas.StepContextRequested += (_, index) => { if (_cts != null) return; ShowStepContextMenu(index); };
+        workflowCanvas.CanvasContextRequested += (_, pt) => { if (_cts != null) return; ShowCanvasContextMenu(pt); };
         workflowCanvas.StepReorderRequested += (_, order) =>
         {
+            if (_cts != null) return;
             if (order.From < 0 || order.From >= _workflowSteps.Count || order.To < 0 || order.To >= _workflowSteps.Count) return;
             var step = _workflowSteps[order.From];
             _workflowSteps.RemoveAt(order.From);
@@ -365,7 +367,7 @@ public partial class MainForm : Form
             LoadStepConfig(order.To);
             SetStatus($"Đã đổi thứ tự step {order.From + 1} → {order.To + 1}");
         };
-        workflowCanvas.StepDropRequested += (_, request) => AddStep(request.Type, request.Location);
+        workflowCanvas.StepDropRequested += (_, request) => { if (_cts != null) return; AddStep(request.Type, request.Location); };
         FormClosing += MainForm_FormClosing;
         KeyDown += MainForm_KeyDown;
     }
@@ -2538,6 +2540,15 @@ public partial class MainForm : Form
 
     private void SwitchWorkflowProfile(string? explicitTarget = null)
     {
+        if (_cts != null)
+        {
+            ShowError("Đang có tiến trình chạy quy trình. Vui lòng dừng tiến trình trước khi đổi quy trình.");
+            cboWorkflowProfiles.SelectedItem = _currentWorkflowFile;
+            if (cboTopWorkflowSelect != null && cboTopWorkflowSelect.Items.Contains(_currentWorkflowFile))
+                cboTopWorkflowSelect.SelectedItem = _currentWorkflowFile;
+            return;
+        }
+
         var selectedFile = explicitTarget ?? (cboWorkflowProfiles.SelectedItem as string);
         if (string.IsNullOrEmpty(selectedFile)) return;
         if (selectedFile == _currentWorkflowFile && explicitTarget == null) return;
@@ -4909,7 +4920,6 @@ public partial class MainForm : Form
     private async Task StartRunAsync(bool onlySelected = false)
     {
         if (!_isIosMode && _currentDevice == null) { ShowError("Chưa kết nối thiết bị Android."); return; }
-        if (_workflowSteps.Count == 0) { ShowError("Workflow đang trống."); return; }
         if (_jobs.Count == 0) { ShowError("Chưa có sản phẩm trong danh sách."); return; }
 
         var selectedIndices = productListControl.SelectedIndices;
@@ -4918,6 +4928,8 @@ public partial class MainForm : Form
             ShowError("Vui lòng chọn ít nhất một video trong danh sách.");
             return;
         }
+
+        SaveAutoSavedWorkflow();
 
         string targetPlatform = "Shopee";
         bool isMultiWorkflow = false;
@@ -4945,6 +4957,12 @@ public partial class MainForm : Form
             limitJobCount = dialog.LimitJobCount;
             maxJobsToRun = dialog.MaxJobsToRun;
             autoCloseAppOnFinish = dialog.AutoCloseAppOnFinish;
+        }
+
+        if (!isMultiWorkflow && _workflowSteps.Count == 0)
+        {
+            ShowError("Quy trình làm việc hiện tại đang trống.");
+            return;
         }
 
         List<Models.JobItem> jobsToRun = [];
@@ -5120,6 +5138,8 @@ public partial class MainForm : Form
             btnStart.Enabled = false;
             btnTestWorkflow.Enabled = false;
             btnStop.Enabled = true;
+            cboWorkflowProfiles.Enabled = false;
+            if (cboTopWorkflowSelect != null) cboTopWorkflowSelect.Enabled = false;
             productListControl.SetRunningState(true);
             progressBar.Maximum = Math.Max(1, jobsToRun.Count);
             progressBar.Value = 0;
@@ -5223,6 +5243,8 @@ public partial class MainForm : Form
                 btnStart.Enabled = true;
                 btnTestWorkflow.Enabled = true;
                 btnStop.Enabled = false;
+                cboWorkflowProfiles.Enabled = true;
+                if (cboTopWorkflowSelect != null) cboTopWorkflowSelect.Enabled = true;
                 productListControl.SetRunningState(false);
                 productListControl.ClearRunningProgress();
                 ClearWorkflowRunningProgress();
@@ -5277,11 +5299,13 @@ public partial class MainForm : Form
 
         var doc1 = WorkflowEngine.LoadWorkflowDocument(path1);
         var steps1 = doc1.Steps;
-        var vars1 = doc1.Variables.Count > 0 ? doc1.Variables : _variables;
+        var vars1 = new List<WorkflowVariable>(_variables.Where(v => v.IsBuiltIn));
+        vars1.AddRange(doc1.Variables.Where(v => !v.IsBuiltIn));
 
         var doc2 = WorkflowEngine.LoadWorkflowDocument(path2);
         var steps2 = doc2.Steps;
-        var vars2 = doc2.Variables.Count > 0 ? doc2.Variables : _variables;
+        var vars2 = new List<WorkflowVariable>(_variables.Where(v => v.IsBuiltIn));
+        vars2.AddRange(doc2.Variables.Where(v => !v.IsBuiltIn));
 
         if (steps1.Count == 0)
         {
@@ -5351,6 +5375,8 @@ public partial class MainForm : Form
             btnStart.Enabled = false;
             btnTestWorkflow.Enabled = false;
             btnStop.Enabled = true;
+            cboWorkflowProfiles.Enabled = false;
+            if (cboTopWorkflowSelect != null) cboTopWorkflowSelect.Enabled = false;
             productListControl.SetRunningState(true);
             progressBar.Maximum = Math.Max(1, jobsToRun.Count);
             progressBar.Value = 0;
@@ -5421,7 +5447,7 @@ public partial class MainForm : Form
                                     token,
                                     progress1,
                                     vars1,
-                                    stepIdx => SetRunningStepFromWorker(stepIdx),
+                                    stepIdx => SetRunningStepFromWorker(stepIdx, steps1.Count, $"[1/2: {multiConfig.Platform1}]"),
                                     multiConfig.Platform1);
                             }
                             else
@@ -5434,7 +5460,8 @@ public partial class MainForm : Form
                                     token,
                                     progress1,
                                     vars1,
-                                    stepIdx => SetRunningStepFromWorker(stepIdx));
+                                    stepIdx => SetRunningStepFromWorker(stepIdx, steps1.Count, $"[1/2: {multiConfig.Platform1}]"),
+                                    targetPlatform: multiConfig.Platform1);
                             }
 
                             if (multiConfig.UploadWaitTimeoutSeconds > 0)
@@ -5518,7 +5545,7 @@ public partial class MainForm : Form
                                     token,
                                     progress2,
                                     vars2,
-                                    stepIdx => SetRunningStepFromWorker(stepIdx),
+                                    stepIdx => SetRunningStepFromWorker(stepIdx, steps2.Count, $"[2/2: {multiConfig.Platform2}]"),
                                     multiConfig.Platform2);
                             }
                             else
@@ -5531,7 +5558,8 @@ public partial class MainForm : Form
                                     token,
                                     progress2,
                                     vars2,
-                                    stepIdx => SetRunningStepFromWorker(stepIdx));
+                                    stepIdx => SetRunningStepFromWorker(stepIdx, steps2.Count, $"[2/2: {multiConfig.Platform2}]"),
+                                    targetPlatform: multiConfig.Platform2);
                             }
 
                             if (multiConfig.UploadWaitTimeoutSeconds > 0)
@@ -5565,6 +5593,20 @@ public partial class MainForm : Form
                         job.Status = JobStatus.Succeeded;
                         job.Log = $"Hoàn tất cả {multiConfig.Platform1} & {multiConfig.Platform2}!";
                         UpdateJobRow(job, JobStatus.Succeeded, job.Log);
+                        BeginInvoke(() => progressBar.Value = Math.Min(progressBar.Maximum, progressBar.Value + 1));
+                    }
+                    else if (wf1Success && !wf2Success)
+                    {
+                        job.Status = JobStatus.Failed;
+                        job.Log = $"Đã up {multiConfig.Platform1}, lỗi {multiConfig.Platform2}";
+                        UpdateJobRow(job, JobStatus.Failed, job.Log);
+                        BeginInvoke(() => progressBar.Value = Math.Min(progressBar.Maximum, progressBar.Value + 1));
+                    }
+                    else if (!wf1Success && wf2Success)
+                    {
+                        job.Status = JobStatus.Failed;
+                        job.Log = $"Lỗi {multiConfig.Platform1}, đã up {multiConfig.Platform2}";
+                        UpdateJobRow(job, JobStatus.Failed, job.Log);
                         BeginInvoke(() => progressBar.Value = Math.Min(progressBar.Maximum, progressBar.Value + 1));
                     }
                     else if (wf1Success || wf2Success)
@@ -5618,7 +5660,7 @@ public partial class MainForm : Form
                             (idx, st, lg) => UpdateJobRow(pendingWf1[idx], st, lg, multiConfig.Platform1),
                             multiConfig.Platform1,
                             vars1,
-                            stepIdx => SetRunningStepFromWorker(stepIdx),
+                            stepIdx => SetRunningStepFromWorker(stepIdx, steps1.Count, $"[1/2: {multiConfig.Platform1}]"),
                             preJobAction: generateTitleFunc,
                             delayBetweenJobsMinMinutes: delayMin,
                             delayBetweenJobsMaxMinutes: delayMax);
@@ -5634,7 +5676,7 @@ public partial class MainForm : Form
                             (idx, st, lg) => UpdateJobRow(pendingWf1[idx], st, lg, multiConfig.Platform1),
                             multiConfig.Platform1,
                             vars1,
-                            stepIdx => SetRunningStepFromWorker(stepIdx),
+                            stepIdx => SetRunningStepFromWorker(stepIdx, steps1.Count, $"[1/2: {multiConfig.Platform1}]"),
                             preJobAction: generateTitleFunc,
                             delayBetweenJobsMinMinutes: delayMin,
                             delayBetweenJobsMaxMinutes: delayMax);
@@ -5671,7 +5713,7 @@ public partial class MainForm : Form
                             (idx, st, lg) => UpdateJobRow(pendingWf2[idx], st, lg, multiConfig.Platform2),
                             multiConfig.Platform2,
                             vars2,
-                            stepIdx => SetRunningStepFromWorker(stepIdx),
+                            stepIdx => SetRunningStepFromWorker(stepIdx, steps2.Count, $"[2/2: {multiConfig.Platform2}]"),
                             preJobAction: generateTitleFunc,
                             delayBetweenJobsMinMinutes: delayMin,
                             delayBetweenJobsMaxMinutes: delayMax);
@@ -5687,7 +5729,7 @@ public partial class MainForm : Form
                             (idx, st, lg) => UpdateJobRow(pendingWf2[idx], st, lg, multiConfig.Platform2),
                             multiConfig.Platform2,
                             vars2,
-                            stepIdx => SetRunningStepFromWorker(stepIdx),
+                            stepIdx => SetRunningStepFromWorker(stepIdx, steps2.Count, $"[2/2: {multiConfig.Platform2}]"),
                             preJobAction: generateTitleFunc,
                             delayBetweenJobsMinMinutes: delayMin,
                             delayBetweenJobsMaxMinutes: delayMax);
@@ -5716,6 +5758,8 @@ public partial class MainForm : Form
                 btnStart.Enabled = true;
                 btnTestWorkflow.Enabled = true;
                 btnStop.Enabled = false;
+                cboWorkflowProfiles.Enabled = true;
+                if (cboTopWorkflowSelect != null) cboTopWorkflowSelect.Enabled = true;
                 productListControl.SetRunningState(false);
                 productListControl.ClearRunningProgress();
                 ClearWorkflowRunningProgress();
@@ -6173,15 +6217,21 @@ public partial class MainForm : Form
 
     private void SetRunningStepFromWorker(int stepIndex)
     {
+        SetRunningStepFromWorker(stepIndex, _workflowSteps.Count, "Đang chạy");
+    }
+
+    private void SetRunningStepFromWorker(int stepIndex, int totalSteps, string prefix = "Đang chạy")
+    {
         if (IsDisposed || !IsHandleCreated) return;
         if (InvokeRequired)
         {
-            BeginInvoke(() => SetRunningStepFromWorker(stepIndex));
+            BeginInvoke(() => SetRunningStepFromWorker(stepIndex, totalSteps, prefix));
             return;
         }
 
         workflowCanvas.SetRunningStep(stepIndex);
-        SetStatus($"Đang chạy bước {stepIndex + 1}/{_workflowSteps.Count}");
+        var label = string.IsNullOrEmpty(prefix) ? "Đang chạy" : prefix;
+        SetStatus($"{label} bước {stepIndex + 1}/{totalSteps}");
     }
 
     private void StopRun()

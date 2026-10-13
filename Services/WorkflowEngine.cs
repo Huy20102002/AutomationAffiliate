@@ -232,6 +232,7 @@ public sealed class WorkflowEngine
                     progress,
                     variables,
                     onStepStarted,
+                    targetPlatform: targetPlatform,
                     isNotFirstJob: appOpenedInThisRun);
                 if (hasOpenAppStep)
                     appOpenedInThisRun = true;
@@ -292,6 +293,7 @@ public sealed class WorkflowEngine
                         retryProgress,
                         variables,
                         onStepStarted,
+                        targetPlatform: targetPlatform,
                         isNotFirstJob: false);
                     if (hasOpenAppStep)
                         appOpenedInThisRun = true;
