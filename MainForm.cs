@@ -4920,6 +4920,8 @@ public partial class MainForm : Form
         }
 
         string targetPlatform = "Shopee";
+        bool isMultiWorkflow = false;
+        MultiWorkflowConfig multiConfig = new();
         bool useAiTitle = false;
         int delayMin = 0;
         int delayMax = 0;
@@ -4928,11 +4930,14 @@ public partial class MainForm : Form
         int maxJobsToRun = 50;
         bool autoCloseAppOnFinish = false;
         int folderId = (cboMainFolderSelect?.SelectedItem as ShopeeVideoUploader.Models.FolderItem)?.Id ?? -1;
-        
-        using (var dialog = new Controls.PlatformSelectDialog())
+
+        var availableWfs = cboWorkflowProfiles.Items.Cast<string>().ToList();
+        using (var dialog = new Controls.PlatformSelectDialog(availableWfs, _currentWorkflowFile))
         {
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
             targetPlatform = dialog.SelectedPlatform;
+            isMultiWorkflow = dialog.IsMultiWorkflow;
+            multiConfig = dialog.MultiConfig;
             useAiTitle = dialog.UseAiTitle;
             delayMin = dialog.DelayMinMinutes;
             delayMax = dialog.DelayMaxMinutes;
@@ -4965,7 +4970,9 @@ public partial class MainForm : Form
 
         if (limitJobCount && maxJobsToRun > 0 && jobsToRun.Count > maxJobsToRun)
         {
-            var pending = jobsToRun.Where(j => !JobStatus.IsCompleted(j, targetPlatform)).ToList();
+            var pending = isMultiWorkflow
+                ? jobsToRun.Where(j => !JobStatus.IsCompleted(j, multiConfig.Platform1) || !JobStatus.IsCompleted(j, multiConfig.Platform2)).ToList()
+                : jobsToRun.Where(j => !JobStatus.IsCompleted(j, targetPlatform)).ToList();
             if (pending.Count >= maxJobsToRun)
             {
                 jobsToRun = pending.Take(maxJobsToRun).ToList();
@@ -4992,7 +4999,7 @@ public partial class MainForm : Form
             return;
         }
 
-        if (onlySelected)
+        if (onlySelected && !isMultiWorkflow)
         {
             var completedCount = jobsToRun.Count(j => JobStatus.IsCompleted(j, targetPlatform));
             if (completedCount == jobsToRun.Count)
@@ -5037,7 +5044,14 @@ public partial class MainForm : Form
         var campaignName = (cboMainFolderSelect?.SelectedItem as ShopeeVideoUploader.Models.FolderItem)?.Name ?? "Tất cả chiến dịch";
         if (onlySelected) campaignName = "Video đã chọn";
 
-        await ExecuteWorkflowRunAsync(jobsToRun, targetPlatform, useAiTitle, delayMin, delayMax, campaignName, autoCloseAppOnFinish);
+        if (isMultiWorkflow)
+        {
+            await ExecuteMultiWorkflowRunAsync(jobsToRun, multiConfig, useAiTitle, delayMin, delayMax, campaignName, autoCloseAppOnFinish);
+        }
+        else
+        {
+            await ExecuteWorkflowRunAsync(jobsToRun, targetPlatform, useAiTitle, delayMin, delayMax, campaignName, autoCloseAppOnFinish);
+        }
     }
 
     private async Task ExecuteWorkflowRunAsync(
@@ -5206,6 +5220,499 @@ public partial class MainForm : Form
             void UpdateUiEnd()
             {
                 workflowCanvas.ClearRunningStep();
+                btnStart.Enabled = true;
+                btnTestWorkflow.Enabled = true;
+                btnStop.Enabled = false;
+                productListControl.SetRunningState(false);
+                productListControl.ClearRunningProgress();
+                ClearWorkflowRunningProgress();
+            }
+
+            if (InvokeRequired) BeginInvoke(UpdateUiEnd);
+            else UpdateUiEnd();
+
+            _cts?.Dispose();
+            _cts = null;
+        }
+
+        if (autoCloseAppOnFinish && (token.IsCancellationRequested == false))
+        {
+            await PromptAutoCloseCountdownAsync();
+        }
+    }
+
+    private string GetPlatformWorkflowPath(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName)) return string.Empty;
+        if (_isIosMode)
+        {
+            var iosPath = Path.Combine(_workflowsDirectory, "_ios_" + fileName);
+            if (File.Exists(iosPath)) return iosPath;
+        }
+        return Path.Combine(_workflowsDirectory, fileName);
+    }
+
+    private async Task ExecuteMultiWorkflowRunAsync(
+        List<JobItem> jobsToRun,
+        MultiWorkflowConfig multiConfig,
+        bool useAiTitle,
+        int delayMin,
+        int delayMax,
+        string campaignName,
+        bool autoCloseAppOnFinish = false)
+    {
+        string path1 = GetPlatformWorkflowPath(multiConfig.WorkflowFile1);
+        string path2 = GetPlatformWorkflowPath(multiConfig.WorkflowFile2);
+
+        if (!File.Exists(path1))
+        {
+            ShowError($"Không tìm thấy file quy trình 1: {multiConfig.WorkflowFile1}");
+            return;
+        }
+        if (!File.Exists(path2))
+        {
+            ShowError($"Không tìm thấy file quy trình 2: {multiConfig.WorkflowFile2}");
+            return;
+        }
+
+        var doc1 = WorkflowEngine.LoadWorkflowDocument(path1);
+        var steps1 = doc1.Steps;
+        var vars1 = doc1.Variables.Count > 0 ? doc1.Variables : _variables;
+
+        var doc2 = WorkflowEngine.LoadWorkflowDocument(path2);
+        var steps2 = doc2.Steps;
+        var vars2 = doc2.Variables.Count > 0 ? doc2.Variables : _variables;
+
+        if (steps1.Count == 0)
+        {
+            ShowError($"Quy trình 1 ({multiConfig.WorkflowFile1}) chưa có bước nào.");
+            return;
+        }
+        if (steps2.Count == 0)
+        {
+            ShowError($"Quy trình 2 ({multiConfig.WorkflowFile2}) chưa có bước nào.");
+            return;
+        }
+
+        Func<JobItem, Task>? generateTitleFunc = null;
+        if (useAiTitle)
+        {
+            var configService = new Services.AiConfigService();
+            var aiService = new Services.AiTitleService();
+            var config = configService.Load();
+            generateTitleFunc = async (job) =>
+            {
+                var rawName = Path.GetFileNameWithoutExtension(job.VideoPath);
+                bool isRealAi = job.IsAiTitleGenerated && !string.IsNullOrWhiteSpace(job.Title) && !string.Equals(job.Title.Trim(), rawName?.Trim(), StringComparison.OrdinalIgnoreCase);
+                if (isRealAi)
+                {
+                    Logger.Info($"[AI] Video #{job.Id} đã có tiêu đề AI trước đó ('{job.Title}'), bỏ qua không gọi AI lại.");
+                    return;
+                }
+                try
+                {
+                    var sourceTitle = !string.IsNullOrWhiteSpace(job.Title) ? job.Title : rawName;
+                    var newTitle = await aiService.GenerateTitleAsync(config, sourceTitle);
+                    if (!string.IsNullOrWhiteSpace(newTitle) && !string.Equals(newTitle.Trim(), sourceTitle.Trim(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        job.Title = newTitle.Trim();
+                        job.IsAiTitleGenerated = true;
+                        if (InvokeRequired)
+                        {
+                            BeginInvoke(() => {
+                                var index = _jobs.IndexOf(job);
+                                if (index >= 0) productListControl.UpdateProduct(index, job);
+                                UpdateLegacyJobGrid(job);
+                            });
+                        }
+                        else
+                        {
+                            var index = _jobs.IndexOf(job);
+                            if (index >= 0) productListControl.UpdateProduct(index, job);
+                            UpdateLegacyJobGrid(job);
+                        }
+                        _dbService.UpdateJob(job);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"[AI] Bỏ qua vì lỗi API: {ex.Message}");
+                    if (InvokeRequired) BeginInvoke(() => SetStatus($"Lỗi AI: {ex.Message}"));
+                    else SetStatus($"Lỗi AI: {ex.Message}");
+                }
+            };
+        }
+
+        _cts = new CancellationTokenSource();
+        var token = _cts.Token;
+
+        void UpdateUiStart()
+        {
+            btnStart.Enabled = false;
+            btnTestWorkflow.Enabled = false;
+            btnStop.Enabled = true;
+            productListControl.SetRunningState(true);
+            progressBar.Maximum = Math.Max(1, jobsToRun.Count);
+            progressBar.Value = 0;
+            SetStatus($"Đang chạy liên hoàn ({multiConfig.Platform1} ➔ {multiConfig.Platform2}) ({jobsToRun.Count} video)...");
+            workflowCanvas.ClearRunningStep();
+        }
+
+        if (InvokeRequired) BeginInvoke(UpdateUiStart);
+        else UpdateUiStart();
+
+        var startTime = DateTime.Now;
+        _ = _telegramBotService?.SendRunStartedNotificationAsync(jobsToRun.Count, $"{multiConfig.Platform1}+{multiConfig.Platform2}", campaignName);
+
+        var originalSteps = _workflowSteps.ToList();
+
+        try
+        {
+            if (multiConfig.Mode == MultiWorkflowExecutionMode.PerVideo)
+            {
+                // Chế độ A: Theo từng video
+                for (int i = 0; i < jobsToRun.Count; i++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    var job = jobsToRun[i];
+                    int displayStt = productListControl.GetJobDisplayStt(job);
+
+                    if (generateTitleFunc != null)
+                    {
+                        SetStatus($"[Video {i + 1}/{jobsToRun.Count}] [AI] Đang sinh tiêu đề...");
+                        await generateTitleFunc(job);
+                    }
+
+                    // 1. Chạy Quy trình 1
+                    bool p1Done = JobStatus.IsCompleted(job, multiConfig.Platform1);
+                    bool wf1Success = p1Done;
+                    if (p1Done && multiConfig.SkipIfPlatformAlreadyDone)
+                    {
+                        Logger.Info($"[Pipeline] Video #{job.Id}: Nền tảng {multiConfig.Platform1} đã up trước đó, tự động bỏ qua.");
+                    }
+                    else
+                    {
+                        job.Status = JobStatus.Running;
+                        job.Log = $"[1/2: {multiConfig.Platform1}] Đang thực hiện...";
+                        UpdateJobRow(job, JobStatus.Running, job.Log, multiConfig.Platform1);
+                        productListControl.UpdateRunningProgress(displayStt, jobsToRun.Count, $"[1/2: {multiConfig.Platform1}] {job.Title}");
+
+                        BeginInvoke(() => {
+                            workflowCanvas.SetSteps(steps1);
+                            workflowCanvas.Refresh();
+                        });
+
+                        var progress1 = new Progress<string>(msg =>
+                        {
+                            job.Log = $"[1/2: {multiConfig.Platform1}] {msg}";
+                            UpdateJobRow(job, JobStatus.Running, job.Log, multiConfig.Platform1);
+                            SetStatus($"[Video {i + 1}/{jobsToRun.Count}] {job.Log}");
+                        });
+
+                        try
+                        {
+                            if (_isIosMode)
+                            {
+                                _iosEngine = new IosWorkflowEngine(_iosManager);
+                                await _iosEngine.ExecuteWorkflowAsync(
+                                    steps1,
+                                    job,
+                                    _currentIosDeviceId,
+                                    token,
+                                    progress1,
+                                    vars1,
+                                    stepIdx => SetRunningStepFromWorker(stepIdx),
+                                    multiConfig.Platform1);
+                            }
+                            else
+                            {
+                                _engine = new WorkflowEngine(_adb, SendTextThroughAdbAsync);
+                                _currentDevice = await _engine.ExecuteWorkflowAsync(
+                                    steps1,
+                                    job,
+                                    _currentDevice!,
+                                    token,
+                                    progress1,
+                                    vars1,
+                                    stepIdx => SetRunningStepFromWorker(stepIdx));
+                            }
+
+                            if (multiConfig.UploadWaitTimeoutSeconds > 0)
+                            {
+                                var waitMsg = $"[1/2: {multiConfig.Platform1}] Chờ video tải lên hoàn tất ({multiConfig.UploadWaitTimeoutSeconds}s)...";
+                                job.Log = waitMsg;
+                                UpdateJobRow(job, JobStatus.Running, waitMsg, multiConfig.Platform1);
+                                SetStatus($"[Video {i + 1}/{jobsToRun.Count}] {waitMsg}");
+                                await Task.Delay(multiConfig.UploadWaitTimeoutSeconds * 1000, token);
+                            }
+
+                            JobStatus.MarkCompleted(job, multiConfig.Platform1);
+                            job.Log = $"[1/2: {multiConfig.Platform1}] Đã đăng thành công!";
+                            UpdateJobRow(job, JobStatus.Running, job.Log, multiConfig.Platform1);
+                            wf1Success = true;
+                            Logger.Info($"[Pipeline] Video #{job.Id}: Hoàn tất {multiConfig.Platform1}.");
+                        }
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception ex1)
+                        {
+                            wf1Success = false;
+                            job.Log = $"[1/2: {multiConfig.Platform1}] Lỗi: {ex1.Message}";
+                            UpdateJobRow(job, JobStatus.Failed, job.Log, multiConfig.Platform1);
+                            Logger.Error($"[Pipeline] Video #{job.Id}: Lỗi {multiConfig.Platform1}: {ex1.Message}", ex1);
+
+                            if (!multiConfig.ContinueNextWorkflowOnFailure)
+                            {
+                                continue;
+                            }
+                        }
+                    }
+
+                    // Nghỉ giữa 2 quy trình nếu quy trình 2 cần chạy
+                    bool p2Done = JobStatus.IsCompleted(job, multiConfig.Platform2);
+                    if (!p2Done && multiConfig.DelayBetweenWorkflowsSeconds > 0 && (wf1Success || multiConfig.ContinueNextWorkflowOnFailure))
+                    {
+                        var delaySec = multiConfig.DelayBetweenWorkflowsSeconds;
+                        var delayInfo = $"Nghỉ {delaySec}s trước khi chuyển sang {multiConfig.Platform2}...";
+                        job.Log = delayInfo;
+                        UpdateJobRow(job, JobStatus.Running, delayInfo);
+                        SetStatus($"[Video {i + 1}/{jobsToRun.Count}] {delayInfo}");
+                        Logger.Info($"[Pipeline] Video #{job.Id}: {delayInfo}");
+                        await Task.Delay(delaySec * 1000, token);
+                    }
+
+                    // 2. Chạy Quy trình 2
+                    p2Done = JobStatus.IsCompleted(job, multiConfig.Platform2);
+                    bool wf2Success = p2Done;
+                    if (p2Done && multiConfig.SkipIfPlatformAlreadyDone)
+                    {
+                        Logger.Info($"[Pipeline] Video #{job.Id}: Nền tảng {multiConfig.Platform2} đã up trước đó, tự động bỏ qua.");
+                    }
+                    else if (wf1Success || multiConfig.ContinueNextWorkflowOnFailure)
+                    {
+                        job.Status = JobStatus.Running;
+                        job.Log = $"[2/2: {multiConfig.Platform2}] Đang thực hiện...";
+                        UpdateJobRow(job, JobStatus.Running, job.Log, multiConfig.Platform2);
+                        productListControl.UpdateRunningProgress(displayStt, jobsToRun.Count, $"[2/2: {multiConfig.Platform2}] {job.Title}");
+
+                        BeginInvoke(() => {
+                            workflowCanvas.SetSteps(steps2);
+                            workflowCanvas.Refresh();
+                        });
+
+                        var progress2 = new Progress<string>(msg =>
+                        {
+                            job.Log = $"[2/2: {multiConfig.Platform2}] {msg}";
+                            UpdateJobRow(job, JobStatus.Running, job.Log, multiConfig.Platform2);
+                            SetStatus($"[Video {i + 1}/{jobsToRun.Count}] {job.Log}");
+                        });
+
+                        try
+                        {
+                            if (_isIosMode)
+                            {
+                                _iosEngine = new IosWorkflowEngine(_iosManager);
+                                await _iosEngine.ExecuteWorkflowAsync(
+                                    steps2,
+                                    job,
+                                    _currentIosDeviceId,
+                                    token,
+                                    progress2,
+                                    vars2,
+                                    stepIdx => SetRunningStepFromWorker(stepIdx),
+                                    multiConfig.Platform2);
+                            }
+                            else
+                            {
+                                _engine = new WorkflowEngine(_adb, SendTextThroughAdbAsync);
+                                _currentDevice = await _engine.ExecuteWorkflowAsync(
+                                    steps2,
+                                    job,
+                                    _currentDevice!,
+                                    token,
+                                    progress2,
+                                    vars2,
+                                    stepIdx => SetRunningStepFromWorker(stepIdx));
+                            }
+
+                            if (multiConfig.UploadWaitTimeoutSeconds > 0)
+                            {
+                                var waitMsg = $"[2/2: {multiConfig.Platform2}] Chờ video tải lên hoàn tất ({multiConfig.UploadWaitTimeoutSeconds}s)...";
+                                job.Log = waitMsg;
+                                UpdateJobRow(job, JobStatus.Running, waitMsg, multiConfig.Platform2);
+                                SetStatus($"[Video {i + 1}/{jobsToRun.Count}] {waitMsg}");
+                                await Task.Delay(multiConfig.UploadWaitTimeoutSeconds * 1000, token);
+                            }
+
+                            JobStatus.MarkCompleted(job, multiConfig.Platform2);
+                            job.Log = $"[2/2: {multiConfig.Platform2}] Đã đăng thành công!";
+                            UpdateJobRow(job, JobStatus.Running, job.Log, multiConfig.Platform2);
+                            wf2Success = true;
+                            Logger.Info($"[Pipeline] Video #{job.Id}: Hoàn tất {multiConfig.Platform2}.");
+                        }
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception ex2)
+                        {
+                            wf2Success = false;
+                            job.Log = $"[2/2: {multiConfig.Platform2}] Lỗi: {ex2.Message}";
+                            UpdateJobRow(job, JobStatus.Failed, job.Log, multiConfig.Platform2);
+                            Logger.Error($"[Pipeline] Video #{job.Id}: Lỗi {multiConfig.Platform2}: {ex2.Message}", ex2);
+                        }
+                    }
+
+                    // Tổng kết Video
+                    if (JobStatus.IsCompleted(job, multiConfig.Platform1) && JobStatus.IsCompleted(job, multiConfig.Platform2))
+                    {
+                        job.Status = JobStatus.Succeeded;
+                        job.Log = $"Hoàn tất cả {multiConfig.Platform1} & {multiConfig.Platform2}!";
+                        UpdateJobRow(job, JobStatus.Succeeded, job.Log);
+                        BeginInvoke(() => progressBar.Value = Math.Min(progressBar.Maximum, progressBar.Value + 1));
+                    }
+                    else if (wf1Success || wf2Success)
+                    {
+                        job.Status = JobStatus.Succeeded;
+                        job.Log = $"Đã up: {(JobStatus.IsCompleted(job, multiConfig.Platform1) ? multiConfig.Platform1 : "")}{(JobStatus.IsCompleted(job, multiConfig.Platform1) && JobStatus.IsCompleted(job, multiConfig.Platform2) ? " & " : "")}{(JobStatus.IsCompleted(job, multiConfig.Platform2) ? multiConfig.Platform2 : "")}";
+                        UpdateJobRow(job, JobStatus.Succeeded, job.Log);
+                        BeginInvoke(() => progressBar.Value = Math.Min(progressBar.Maximum, progressBar.Value + 1));
+                    }
+
+                    // Nghỉ giữa các video (delayMin - delayMax phút)
+                    if (i < jobsToRun.Count - 1 && (delayMin > 0 || delayMax > 0))
+                    {
+                        var minD = Math.Min(delayMin, delayMax);
+                        var maxD = Math.Max(delayMin, delayMax);
+                        var randomDelayMin = new Random().Next(minD, maxD + 1);
+                        if (randomDelayMin > 0)
+                        {
+                            Logger.Info($"Đang nghỉ {randomDelayMin} phút trước khi chạy video tiếp theo...");
+                            job.Log = $"Đang chờ {randomDelayMin} phút...";
+                            UpdateJobRow(job, job.Status, job.Log);
+                            SetStatus($"Nghỉ {randomDelayMin} phút trước khi chạy video tiếp theo...");
+                            await Task.Delay(randomDelayMin * 60 * 1000, token);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Chế độ B: Batch by workflow (Chạy hết QT1 rồi sang QT2)
+                var pendingWf1 = multiConfig.SkipIfPlatformAlreadyDone
+                    ? jobsToRun.Where(j => !JobStatus.IsCompleted(j, multiConfig.Platform1)).ToList()
+                    : jobsToRun.ToList();
+
+                if (pendingWf1.Count > 0)
+                {
+                    SetStatus($"[Lượt 1/2] Đang chạy {multiConfig.Platform1} ({pendingWf1.Count} video)...");
+                    BeginInvoke(() => {
+                        workflowCanvas.SetSteps(steps1);
+                        workflowCanvas.Refresh();
+                    });
+
+                    if (_isIosMode)
+                    {
+                        _iosEngine = new IosWorkflowEngine(_iosManager);
+                        await _iosEngine.RunAllJobsAsync(
+                            steps1,
+                            pendingWf1,
+                            _currentIosDeviceId,
+                            token,
+                            (idx, st, lg) => UpdateJobRow(pendingWf1[idx], st, lg, multiConfig.Platform1),
+                            multiConfig.Platform1,
+                            vars1,
+                            stepIdx => SetRunningStepFromWorker(stepIdx),
+                            preJobAction: generateTitleFunc,
+                            delayBetweenJobsMinMinutes: delayMin,
+                            delayBetweenJobsMaxMinutes: delayMax);
+                    }
+                    else
+                    {
+                        _engine = new WorkflowEngine(_adb, SendTextThroughAdbAsync);
+                        _currentDevice = await _engine.RunAllJobsAsync(
+                            steps1,
+                            pendingWf1,
+                            _currentDevice!,
+                            token,
+                            (idx, st, lg) => UpdateJobRow(pendingWf1[idx], st, lg, multiConfig.Platform1),
+                            multiConfig.Platform1,
+                            vars1,
+                            stepIdx => SetRunningStepFromWorker(stepIdx),
+                            preJobAction: generateTitleFunc,
+                            delayBetweenJobsMinMinutes: delayMin,
+                            delayBetweenJobsMaxMinutes: delayMax);
+                    }
+                }
+
+                // Nghỉ giữa 2 lượt quy trình
+                if (multiConfig.DelayBetweenWorkflowsSeconds > 0)
+                {
+                    SetStatus($"Hoàn tất lượt 1. Nghỉ {multiConfig.DelayBetweenWorkflowsSeconds}s trước khi chuyển sang {multiConfig.Platform2}...");
+                    await Task.Delay(multiConfig.DelayBetweenWorkflowsSeconds * 1000, token);
+                }
+
+                var pendingWf2 = multiConfig.SkipIfPlatformAlreadyDone
+                    ? jobsToRun.Where(j => !JobStatus.IsCompleted(j, multiConfig.Platform2)).ToList()
+                    : jobsToRun.ToList();
+
+                if (pendingWf2.Count > 0)
+                {
+                    SetStatus($"[Lượt 2/2] Đang chạy {multiConfig.Platform2} ({pendingWf2.Count} video)...");
+                    BeginInvoke(() => {
+                        workflowCanvas.SetSteps(steps2);
+                        workflowCanvas.Refresh();
+                    });
+
+                    if (_isIosMode)
+                    {
+                        _iosEngine = new IosWorkflowEngine(_iosManager);
+                        await _iosEngine.RunAllJobsAsync(
+                            steps2,
+                            pendingWf2,
+                            _currentIosDeviceId,
+                            token,
+                            (idx, st, lg) => UpdateJobRow(pendingWf2[idx], st, lg, multiConfig.Platform2),
+                            multiConfig.Platform2,
+                            vars2,
+                            stepIdx => SetRunningStepFromWorker(stepIdx),
+                            preJobAction: generateTitleFunc,
+                            delayBetweenJobsMinMinutes: delayMin,
+                            delayBetweenJobsMaxMinutes: delayMax);
+                    }
+                    else
+                    {
+                        _engine = new WorkflowEngine(_adb, SendTextThroughAdbAsync);
+                        _currentDevice = await _engine.RunAllJobsAsync(
+                            steps2,
+                            pendingWf2,
+                            _currentDevice!,
+                            token,
+                            (idx, st, lg) => UpdateJobRow(pendingWf2[idx], st, lg, multiConfig.Platform2),
+                            multiConfig.Platform2,
+                            vars2,
+                            stepIdx => SetRunningStepFromWorker(stepIdx),
+                            preJobAction: generateTitleFunc,
+                            delayBetweenJobsMinMinutes: delayMin,
+                            delayBetweenJobsMaxMinutes: delayMax);
+                    }
+                }
+            }
+
+            var finishTimeStr = DateTime.Now.ToString("dd/MM/yyyy HH:mm");
+            SetStatus($"Hoàn tất chuỗi liên hoàn lúc {finishTimeStr}");
+            var duration = DateTime.Now - startTime;
+            var succeeded = jobsToRun.Count(j => JobStatus.IsCompleted(j, multiConfig.Platform1) && JobStatus.IsCompleted(j, multiConfig.Platform2));
+            var failed = jobsToRun.Count(j => j.Status == JobStatus.Failed);
+            _ = _telegramBotService?.SendBatchFinishedNotificationAsync(jobsToRun.Count, succeeded, failed, duration, $"{multiConfig.Platform1}+{multiConfig.Platform2}");
+            Logger.Info($"[Pipeline] Hoàn tất chuỗi liên hoàn lúc {finishTimeStr}. Thành công: {succeeded}, Thất bại: {failed}.");
+        }
+        catch (OperationCanceledException) { SetStatus("Đã dừng bởi người dùng"); }
+        catch (Exception ex) { ShowError($"Lỗi chạy chuỗi liên hoàn: {ex.Message}"); }
+        finally
+        {
+            void UpdateUiEnd()
+            {
+                workflowCanvas.SetSteps(originalSteps);
+                workflowCanvas.ClearRunningStep();
+                workflowCanvas.Refresh();
+
                 btnStart.Enabled = true;
                 btnTestWorkflow.Enabled = true;
                 btnStop.Enabled = false;
