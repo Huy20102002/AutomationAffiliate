@@ -53,6 +53,8 @@ public partial class MainForm : Form
     private TelegramConfig _telegramConfig = new();
     private TelegramBotService? _telegramBotService;
     private bool _isGeneratingAiTitles = false;
+    private bool _isSwitchingWorkflowInternally = false;
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _pendingLogMessages = new();
 
     private sealed record VideoSourceChoice(VideoSourceMode Mode)
     {
@@ -246,6 +248,7 @@ public partial class MainForm : Form
         cboWorkflowProfiles.SelectedIndexChanged += (_, _) => SwitchWorkflowProfile();
         cboTopWorkflowSelect.SelectedIndexChanged += (_, _) =>
         {
+            if (_isSwitchingWorkflowInternally) return;
             var sel = cboTopWorkflowSelect.SelectedItem as string;
             if (!string.IsNullOrEmpty(sel) && sel != _currentWorkflowFile)
             {
@@ -2542,6 +2545,7 @@ public partial class MainForm : Form
 
     private void SwitchWorkflowProfile(string? explicitTarget = null)
     {
+        if (_isSwitchingWorkflowInternally) return;
         if (_cts != null)
         {
             ShowError("Đang có tiến trình chạy quy trình. Vui lòng dừng tiến trình trước khi đổi quy trình.");
@@ -5426,6 +5430,8 @@ public partial class MainForm : Form
                     bool p1Done = JobStatus.IsCompleted(job, multiConfig.Platform1);
                     bool p1SkippedLimit = isP1Shopee && multiConfig.LimitShopeeJobs && (shopeeCompletedCount >= maxShopeeLimit);
                     bool wf1Success = p1Done;
+                    bool wf1Ran = false;
+
                     if (p1Done && multiConfig.SkipIfPlatformAlreadyDone)
                     {
                         Logger.Info($"[Pipeline] Video #{job.Id}: Nền tảng {multiConfig.Platform1} đã up trước đó, tự động bỏ qua.");
@@ -5438,15 +5444,15 @@ public partial class MainForm : Form
                     }
                     else
                     {
+                        wf1Ran = true;
                         job.Status = JobStatus.Running;
                         job.Log = $"[1/2: {multiConfig.Platform1}] Đang thực hiện...";
                         UpdateJobRow(job, JobStatus.Running, job.Log, multiConfig.Platform1);
                         productListControl.UpdateRunningProgress(displayStt, jobsToRun.Count, $"[1/2: {multiConfig.Platform1}] {job.Title}");
+                        UpdateWorkflowRunningProgress(displayStt, jobsToRun.Count, $"[1/2: {multiConfig.Platform1}] {job.Title}");
 
-                        BeginInvoke(() => {
-                            workflowCanvas.SetSteps(steps1);
-                            workflowCanvas.Refresh();
-                        });
+                        // Chuyển UI sang Quy trình 1
+                        SetActiveWorkflowDisplay(multiConfig.WorkflowFile1, steps1);
 
                         var progress1 = new Progress<string>(msg =>
                         {
@@ -5486,11 +5492,17 @@ public partial class MainForm : Form
 
                             if (multiConfig.UploadWaitTimeoutSeconds > 0)
                             {
-                                var waitMsg = $"[1/2: {multiConfig.Platform1}] Chờ video tải lên hoàn tất ({multiConfig.UploadWaitTimeoutSeconds}s)...";
-                                job.Log = waitMsg;
-                                UpdateJobRow(job, JobStatus.Running, waitMsg, multiConfig.Platform1);
-                                SetStatus($"[Video {i + 1}/{jobsToRun.Count}] {waitMsg}");
-                                await Task.Delay(multiConfig.UploadWaitTimeoutSeconds * 1000, token);
+                                int totalWait = multiConfig.UploadWaitTimeoutSeconds;
+                                Logger.Info($"[Pipeline] Video #{job.Id}: [1/2: {multiConfig.Platform1}] Chờ video tải lên hoàn tất ({totalWait}s)...");
+                                for (int s = totalWait; s > 0; s--)
+                                {
+                                    token.ThrowIfCancellationRequested();
+                                    var waitMsg = $"[1/2: {multiConfig.Platform1}] Chờ video tải lên: còn {s}s...";
+                                    job.Log = waitMsg;
+                                    UpdateJobRow(job, JobStatus.Running, waitMsg, multiConfig.Platform1);
+                                    SetStatus($"[Video {i + 1}/{jobsToRun.Count}] {waitMsg}");
+                                    await Task.Delay(1000, token);
+                                }
                             }
 
                             JobStatus.MarkCompleted(job, multiConfig.Platform1);
@@ -5520,18 +5532,24 @@ public partial class MainForm : Form
                     bool p2SkippedLimit = isP2Shopee && multiConfig.LimitShopeeJobs && (shopeeCompletedCount >= maxShopeeLimit);
                     if (!p2Done && !p2SkippedLimit && multiConfig.DelayBetweenWorkflowsSeconds > 0 && (wf1Success || multiConfig.ContinueNextWorkflowOnFailure))
                     {
-                        var delaySec = multiConfig.DelayBetweenWorkflowsSeconds;
-                        var delayInfo = $"Nghỉ {delaySec}s trước khi chuyển sang {multiConfig.Platform2}...";
-                        job.Log = delayInfo;
-                        UpdateJobRow(job, JobStatus.Running, delayInfo);
-                        SetStatus($"[Video {i + 1}/{jobsToRun.Count}] {delayInfo}");
-                        Logger.Info($"[Pipeline] Video #{job.Id}: {delayInfo}");
-                        await Task.Delay(delaySec * 1000, token);
+                        int delaySec = multiConfig.DelayBetweenWorkflowsSeconds;
+                        Logger.Info($"[Pipeline] Video #{job.Id}: Nghỉ {delaySec}s trước khi chuyển sang {multiConfig.Platform2}...");
+                        for (int s = delaySec; s > 0; s--)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            var delayInfo = $"Nghỉ: còn {s}s trước khi chuyển sang {multiConfig.Platform2}...";
+                            job.Log = delayInfo;
+                            UpdateJobRow(job, JobStatus.Running, delayInfo);
+                            SetStatus($"[Video {i + 1}/{jobsToRun.Count}] {delayInfo}");
+                            await Task.Delay(1000, token);
+                        }
                     }
 
                     // 2. Chạy Quy trình 2
                     p2Done = JobStatus.IsCompleted(job, multiConfig.Platform2);
                     bool wf2Success = p2Done;
+                    bool wf2Ran = false;
+
                     if (p2Done && multiConfig.SkipIfPlatformAlreadyDone)
                     {
                         Logger.Info($"[Pipeline] Video #{job.Id}: Nền tảng {multiConfig.Platform2} đã up trước đó, tự động bỏ qua.");
@@ -5544,15 +5562,15 @@ public partial class MainForm : Form
                     }
                     else if (wf1Success || multiConfig.ContinueNextWorkflowOnFailure)
                     {
+                        wf2Ran = true;
                         job.Status = JobStatus.Running;
                         job.Log = $"[2/2: {multiConfig.Platform2}] Đang thực hiện...";
                         UpdateJobRow(job, JobStatus.Running, job.Log, multiConfig.Platform2);
                         productListControl.UpdateRunningProgress(displayStt, jobsToRun.Count, $"[2/2: {multiConfig.Platform2}] {job.Title}");
+                        UpdateWorkflowRunningProgress(displayStt, jobsToRun.Count, $"[2/2: {multiConfig.Platform2}] {job.Title}");
 
-                        BeginInvoke(() => {
-                            workflowCanvas.SetSteps(steps2);
-                            workflowCanvas.Refresh();
-                        });
+                        // Chuyển UI sang Quy trình 2
+                        SetActiveWorkflowDisplay(multiConfig.WorkflowFile2, steps2);
 
                         var progress2 = new Progress<string>(msg =>
                         {
@@ -5592,11 +5610,17 @@ public partial class MainForm : Form
 
                             if (multiConfig.UploadWaitTimeoutSeconds > 0)
                             {
-                                var waitMsg = $"[2/2: {multiConfig.Platform2}] Chờ video tải lên hoàn tất ({multiConfig.UploadWaitTimeoutSeconds}s)...";
-                                job.Log = waitMsg;
-                                UpdateJobRow(job, JobStatus.Running, waitMsg, multiConfig.Platform2);
-                                SetStatus($"[Video {i + 1}/{jobsToRun.Count}] {waitMsg}");
-                                await Task.Delay(multiConfig.UploadWaitTimeoutSeconds * 1000, token);
+                                int totalWait = multiConfig.UploadWaitTimeoutSeconds;
+                                Logger.Info($"[Pipeline] Video #{job.Id}: [2/2: {multiConfig.Platform2}] Chờ video tải lên hoàn tất ({totalWait}s)...");
+                                for (int s = totalWait; s > 0; s--)
+                                {
+                                    token.ThrowIfCancellationRequested();
+                                    var waitMsg = $"[2/2: {multiConfig.Platform2}] Chờ video tải lên: còn {s}s...";
+                                    job.Log = waitMsg;
+                                    UpdateJobRow(job, JobStatus.Running, waitMsg, multiConfig.Platform2);
+                                    SetStatus($"[Video {i + 1}/{jobsToRun.Count}] {waitMsg}");
+                                    await Task.Delay(1000, token);
+                                }
                             }
 
                             JobStatus.MarkCompleted(job, multiConfig.Platform2);
@@ -5660,19 +5684,27 @@ public partial class MainForm : Form
                         BeginInvoke(() => progressBar.Value = Math.Min(progressBar.Maximum, progressBar.Value + 1));
                     }
 
-                    // Nghỉ giữa các video (delayMin - delayMax phút)
-                    if (i < jobsToRun.Count - 1 && (delayMin > 0 || delayMax > 0))
+                    // Nghỉ giữa các video (chỉ nghỉ nếu có ít nhất 1 quy trình thực sự chạy cho video này)
+                    if ((wf1Ran || wf2Ran) && i < jobsToRun.Count - 1 && (delayMin > 0 || delayMax > 0))
                     {
                         var minD = Math.Min(delayMin, delayMax);
                         var maxD = Math.Max(delayMin, delayMax);
                         var randomDelayMin = new Random().Next(minD, maxD + 1);
                         if (randomDelayMin > 0)
                         {
-                            Logger.Info($"Đang nghỉ {randomDelayMin} phút trước khi chạy video tiếp theo...");
-                            job.Log = $"Đang chờ {randomDelayMin} phút...";
-                            UpdateJobRow(job, job.Status, job.Log);
-                            SetStatus($"Nghỉ {randomDelayMin} phút trước khi chạy video tiếp theo...");
-                            await Task.Delay(randomDelayMin * 60 * 1000, token);
+                            int totalSec = randomDelayMin * 60;
+                            Logger.Info($"Đang nghỉ {randomDelayMin} phút ({totalSec}s) trước khi chạy video tiếp theo...");
+                            for (int s = totalSec; s > 0; s--)
+                            {
+                                token.ThrowIfCancellationRequested();
+                                var ts = TimeSpan.FromSeconds(s);
+                                var tsStr = ts.Hours > 0 ? $"{ts.Hours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}" : $"{ts.Minutes:D2}:{ts.Seconds:D2}";
+                                var waitMsg = $"Nghỉ trước video tiếp theo: còn {tsStr}";
+                                job.Log = waitMsg;
+                                UpdateJobRow(job, job.Status, waitMsg);
+                                SetStatus($"[Video {i + 1}/{jobsToRun.Count}] {waitMsg}");
+                                await Task.Delay(1000, token);
+                            }
                         }
                     }
                 }
@@ -5693,10 +5725,7 @@ public partial class MainForm : Form
                 if (pendingWf1.Count > 0)
                 {
                     SetStatus($"[Lượt 1/2] Đang chạy {multiConfig.Platform1} ({pendingWf1.Count} video)...");
-                    BeginInvoke(() => {
-                        workflowCanvas.SetSteps(steps1);
-                        workflowCanvas.Refresh();
-                    });
+                    SetActiveWorkflowDisplay(multiConfig.WorkflowFile1, steps1);
 
                     if (_isIosMode)
                     {
@@ -5735,8 +5764,14 @@ public partial class MainForm : Form
                 // Nghỉ giữa 2 lượt quy trình
                 if (multiConfig.DelayBetweenWorkflowsSeconds > 0)
                 {
-                    SetStatus($"Hoàn tất lượt 1. Nghỉ {multiConfig.DelayBetweenWorkflowsSeconds}s trước khi chuyển sang {multiConfig.Platform2}...");
-                    await Task.Delay(multiConfig.DelayBetweenWorkflowsSeconds * 1000, token);
+                    int delaySec = multiConfig.DelayBetweenWorkflowsSeconds;
+                    Logger.Info($"[Batch] Hoàn tất lượt 1. Nghỉ {delaySec}s trước khi chuyển sang {multiConfig.Platform2}...");
+                    for (int s = delaySec; s > 0; s--)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        SetStatus($"[Batch] Hoàn tất lượt 1. Nghỉ: còn {s}s trước khi chuyển sang {multiConfig.Platform2}...");
+                        await Task.Delay(1000, token);
+                    }
                 }
 
                 var pendingWf2 = multiConfig.SkipIfPlatformAlreadyDone
@@ -5752,10 +5787,7 @@ public partial class MainForm : Form
                 if (pendingWf2.Count > 0)
                 {
                     SetStatus($"[Lượt 2/2] Đang chạy {multiConfig.Platform2} ({pendingWf2.Count} video)...");
-                    BeginInvoke(() => {
-                        workflowCanvas.SetSteps(steps2);
-                        workflowCanvas.Refresh();
-                    });
+                    SetActiveWorkflowDisplay(multiConfig.WorkflowFile2, steps2);
 
                     if (_isIosMode)
                     {
@@ -5806,7 +5838,7 @@ public partial class MainForm : Form
         {
             void UpdateUiEnd()
             {
-                workflowCanvas.SetSteps(originalSteps);
+                SetActiveWorkflowDisplay(_currentWorkflowFile, originalSteps);
                 workflowCanvas.ClearRunningStep();
                 workflowCanvas.Refresh();
 
@@ -6355,12 +6387,106 @@ public partial class MainForm : Form
         }
     }
 
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int wMsg, IntPtr wParam, IntPtr lParam);
+    private const int WM_VSCROLL = 0x0115;
+    private const int SB_BOTTOM = 7;
+
+    public void ScrollLogToBottom()
+    {
+        if (txtLog != null && txtLog.IsHandleCreated)
+        {
+            SendMessage(txtLog.Handle, WM_VSCROLL, (IntPtr)SB_BOTTOM, IntPtr.Zero);
+        }
+    }
+
     private void OnLogReceived(string message)
     {
-        if (IsDisposed || !IsHandleCreated) return;
-        if (InvokeRequired) { BeginInvoke(() => OnLogReceived(message)); return; }
+        if (IsDisposed) return;
+        if (!IsHandleCreated || txtLog == null || !txtLog.IsHandleCreated)
+        {
+            _pendingLogMessages.Enqueue(message);
+            return;
+        }
+
+        if (InvokeRequired)
+        {
+            try
+            {
+                BeginInvoke(() => OnLogReceived(message));
+            }
+            catch (ObjectDisposedException) { }
+            return;
+        }
+
+        try
+        {
+            while (_pendingLogMessages.TryDequeue(out var pending))
+            {
+                AppendLogToControl(pending);
+            }
+            AppendLogToControl(message);
+        }
+        catch { }
+    }
+
+    private void AppendLogToControl(string message)
+    {
+        if (txtLog == null || txtLog.IsDisposed) return;
+        if (txtLog.Lines.Length > 3000)
+        {
+            var lines = txtLog.Lines;
+            var trimmed = new string[1500];
+            Array.Copy(lines, lines.Length - 1500, trimmed, 0, 1500);
+            txtLog.Lines = trimmed;
+        }
+
         txtLog.AppendText(message + Environment.NewLine);
+        txtLog.SelectionStart = txtLog.TextLength;
+        txtLog.SelectionLength = 0;
         txtLog.ScrollToCaret();
+        ScrollLogToBottom();
+    }
+
+    private void SetActiveWorkflowDisplay(string workflowFileName, IReadOnlyList<WorkflowStep> steps)
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        if (InvokeRequired)
+        {
+            BeginInvoke(() => SetActiveWorkflowDisplay(workflowFileName, steps));
+            return;
+        }
+
+        try
+        {
+            _isSwitchingWorkflowInternally = true;
+
+            if (!string.IsNullOrEmpty(workflowFileName))
+            {
+                if (!cboWorkflowProfiles.Items.Contains(workflowFileName))
+                    cboWorkflowProfiles.Items.Add(workflowFileName);
+                cboWorkflowProfiles.SelectedItem = workflowFileName;
+                cboWorkflowProfiles.Invalidate();
+
+                if (cboTopWorkflowSelect != null)
+                {
+                    if (!cboTopWorkflowSelect.Items.Contains(workflowFileName))
+                        cboTopWorkflowSelect.Items.Add(workflowFileName);
+                    cboTopWorkflowSelect.SelectedItem = workflowFileName;
+                    cboTopWorkflowSelect.Invalidate();
+                }
+            }
+
+            lblStepCount.Text = $"{steps.Count} BƯỚC";
+            workflowCanvas.SetSteps(steps);
+            workflowCanvas.ScrollToTopLeft();
+            workflowCanvas.ClearRunningStep();
+            workflowCanvas.Refresh();
+        }
+        finally
+        {
+            _isSwitchingWorkflowInternally = false;
+        }
     }
 
     private void SetStatus(string text)

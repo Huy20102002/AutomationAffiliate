@@ -52,10 +52,82 @@ public sealed class WorkflowCanvas : ScrollableControl
         MultiSelectionChanged?.Invoke(this, _selectedIndices);
     }
 
-    public void SetRunningStep(int index)
+    public void SetRunningStep(int index, bool autoScroll = true)
     {
         _runningIndex = index >= 0 && index < _steps.Count ? index : -1;
+        if (autoScroll && _runningIndex >= 0)
+        {
+            EnsureStepVisible(_runningIndex);
+        }
         Invalidate();
+    }
+
+    public void ScrollToTopLeft()
+    {
+        if (_steps.Count > 0)
+        {
+            var rects = GetNodeRects();
+            if (rects.Count > 0)
+            {
+                int minX = rects.Min(r => r.Left);
+                int minY = rects.Min(r => r.Top);
+                _panOffset = new PointF(40 - minX * _zoom, 40 - minY * _zoom);
+                Invalidate();
+                return;
+            }
+        }
+        _panOffset = new PointF(0, 0);
+        Invalidate();
+    }
+
+    public void EnsureStepVisible(int index)
+    {
+        if (index < 0 || index >= _steps.Count) return;
+        if (ClientSize.Width <= 100 || ClientSize.Height <= 100) return;
+
+        var rects = GetNodeRects();
+        if (index >= rects.Count) return;
+        var rect = rects[index];
+
+        float nodeWidth = rect.Width * _zoom;
+        float nodeHeight = rect.Height * _zoom;
+        float screenLeft = rect.Left * _zoom + _panOffset.X;
+        float screenTop = rect.Top * _zoom + _panOffset.Y;
+        float screenRight = screenLeft + nodeWidth;
+        float screenBottom = screenTop + nodeHeight;
+
+        const int margin = 40;
+        bool changed = false;
+        float newOffsetX = _panOffset.X;
+        float newOffsetY = _panOffset.Y;
+
+        if (screenLeft < margin)
+        {
+            newOffsetX += (margin - screenLeft);
+            changed = true;
+        }
+        else if (screenRight > ClientSize.Width - margin)
+        {
+            newOffsetX -= (screenRight - (ClientSize.Width - margin));
+            changed = true;
+        }
+
+        if (screenTop < margin)
+        {
+            newOffsetY += (margin - screenTop);
+            changed = true;
+        }
+        else if (screenBottom > ClientSize.Height - margin)
+        {
+            newOffsetY -= (screenBottom - (ClientSize.Height - margin));
+            changed = true;
+        }
+
+        if (changed)
+        {
+            _panOffset = new PointF(newOffsetX, newOffsetY);
+            Invalidate();
+        }
     }
 
     public void ClearRunningStep()

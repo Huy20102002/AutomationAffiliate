@@ -1159,7 +1159,8 @@ partial class MainForm
             ForeColor = Color.FromArgb(49, 95, 125),
             BorderStyle = BorderStyle.None,
             Font = new Font("Cascadia Mono", 9F),
-            DetectUrls = false
+            DetectUrls = false,
+            HideSelection = false
         };
         logTab.Controls.Add(txtLog);
         tabs.TabPages.Add(logTab);
@@ -1185,7 +1186,14 @@ partial class MainForm
         panelBottom.Controls.Add(chkOnlyWithLink);
         chkOnlyWithLink.BringToFront();
         panelBottom.Resize += (_, _) => chkOnlyWithLink.BringToFront();
-        tabs.SelectedIndexChanged += (_, _) => chkOnlyWithLink.BringToFront();
+        tabs.SelectedIndexChanged += (_, _) =>
+        {
+            chkOnlyWithLink.BringToFront();
+            if (tabs.SelectedTab == logTab)
+            {
+                ScrollLogToBottom();
+            }
+        };
 
         parent.Controls.Add(panelBottom, 0, 1);
     }

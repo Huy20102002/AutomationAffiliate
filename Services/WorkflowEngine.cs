@@ -249,10 +249,16 @@ public sealed class WorkflowEngine
                     var randomDelayMinutes = new Random().Next(delayMin, delayMax + 1);
                     if (randomDelayMinutes > 0)
                     {
-                        var delayMs = randomDelayMinutes * 60 * 1000;
-                        Logger.Info($"Đang chờ {randomDelayMinutes} phút trước khi chạy video tiếp theo...");
-                        onJobUpdate?.Invoke(i, JobStatus.Succeeded, $"Chờ {randomDelayMinutes} phút...");
-                        await Task.Delay(delayMs, ct);
+                        int totalSec = randomDelayMinutes * 60;
+                        Logger.Info($"Đang chờ {randomDelayMinutes} phút ({totalSec}s) trước khi chạy video tiếp theo...");
+                        for (int s = totalSec; s > 0; s--)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            var ts = TimeSpan.FromSeconds(s);
+                            var tsStr = ts.Hours > 0 ? $"{ts.Hours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}" : $"{ts.Minutes:D2}:{ts.Seconds:D2}";
+                            onJobUpdate?.Invoke(i, JobStatus.Succeeded, $"Nghỉ: còn {tsStr}...");
+                            await Task.Delay(1000, ct);
+                        }
                     }
                 }
             }
